@@ -16,12 +16,15 @@ bool LlmClient::chat_stream(
     const std::vector<mcp::ToolDef>& tools,
     StreamCallback callback) {
 
-    // 解析 base_url - 仅支持 HTTP (HTTPS 需 OpenSSL 编译支持)
+    // HTTPS 暂不支持 (需 OpenSSL 3.x dev headers + 重新编译)
+    if (base_url.find("https://") == 0) {
+        LOG_ERROR("HTTPS is not supported in current build. Use an HTTP endpoint (e.g. Ollama on localhost:11434)");
+        return false;
+    }
+
     std::string host, path_prefix;
     std::string url = base_url;
-    if (url.find("https://") == 0) {
-        url = url.substr(8);
-    } else if (url.find("http://") == 0) {
+    if (url.find("http://") == 0) {
         url = url.substr(7);
     }
 
@@ -31,6 +34,7 @@ bool LlmClient::chat_stream(
         path_prefix = url.substr(slash);
     } else {
         host = url;
+        path_prefix = "";
     }
 
     httplib::Client cli(host);

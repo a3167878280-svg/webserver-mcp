@@ -79,6 +79,8 @@ int main(int argc, char* argv[]) {
         transport.set_chat_config(chat_cfg);
 
         transport.start(config.port);
+        fprintf(stderr, "HTTP+SSE mode, listening on http://localhost:%d\n", transport.port());
+        fprintf(stderr, "Chat UI: http://localhost:%d/chat.html\n", transport.port());
         LOG_INFO("HTTP+SSE mode, listening on http://localhost:%d", config.port);
         LOG_INFO("Chat available at http://localhost:%d/chat.html", config.port);
 
