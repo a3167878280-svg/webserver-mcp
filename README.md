@@ -9,10 +9,8 @@
 | **V1** | CMake 构建、JSON-RPC 2.0 协议、stdio 传输、基础 MCP 方法 | ✅ 已完成 |
 | **V2** | 插件系统 (dlopen + .so 动态加载) + FilePlugin | ✅ 已完成 |
 | **V3** | HTTP+SSE 远程传输 (cpp-httplib) + 双模式切换 | ✅ 已完成 |
-| V4 | LLM 代理 + 聊天前端 | 计划中 |
-| V3 | HTTP+SSE 远程传输 (cpp-httplib) | 计划中 |
-| V4 | LLM 代理 + 聊天前端 | 计划中 |
-| V5 | 更多插件 (天气/代码审查/文件管理) | 计划中 |
+| **V4** | LLM 代理 + 聊天前端 (工具编排) | ✅ 已完成 |
+| V5 | 更多插件 (天气/代码审查) | 计划中 |
 
 ## V1 新增功能 (2026-05-27)
 
@@ -199,6 +197,62 @@ stdio 模式兼容     → 原有功能正常
 ### 依赖新增
 
 - **cpp-httplib** — header-only HTTP/HTTPS 库 (`third_party/httplib.h`)
+
+---
+
+## V4 新增功能 (2026-05-27)
+
+### LLM 代理 + 聊天前端
+
+```
+src/llm/
+├── llm_client.h/cpp           OpenAI 兼容流式 API 客户端
+└── tool_orchestrator.h/cpp    工具调用编排循环
+
+chat/
+└── chat.html                  单页聊天界面
+```
+
+### 聊天 API 端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/chat` | POST | SSE 流式聊天 (含工具编排) |
+| `/api/models` | GET | 模型列表 |
+| `/chat.html` | GET | 聊天界面 |
+
+### 工具编排流程
+
+```
+用户消息 → LlmClient (流式调用 LLM)
+  → LLM 返回 tool_calls → McpHandler.tools/call → 执行工具
+  → 工具结果反馈给 LLM → 循环
+  → LLM 返回文本 → SSE 流式推送给浏览器
+```
+
+### 支持的模型后端
+
+- OpenAI API (gpt-4o, gpt-4o-mini)
+- Claude API (通过兼容适配)
+- Ollama 本地模型 (qwen2.5, llama3 等)
+- 任意 OpenAI 兼容 API
+
+### 使用方式
+
+1. 启动服务器: `./mcp_server` (HTTP 模式)
+2. 浏览器打开: `http://localhost:9006/chat.html`
+3. 填入 API Key + 选择模型
+4. 开始对话: "帮我读取 /etc/hostname 文件"
+
+### 验证结果 (5/5 通过)
+
+```
+health check     → OK
+chat.html        → 正常返回
+/api/models      → 返回模型列表
+/api/chat        → 缺少 API key 时正确报错
+MCP SSE 兼容     → 原有功能正常
+```
 
 ---
 

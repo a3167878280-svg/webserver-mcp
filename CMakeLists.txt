@@ -17,6 +17,8 @@ set(SOURCES
     src/plugin/plugin_registry.cpp
     src/plugin/plugin_manager.cpp
     src/plugin/dynamic_library.cpp
+    src/llm/llm_client.cpp
+    src/llm/tool_orchestrator.cpp
 )
 
 add_executable(mcp_server ${SOURCES})
@@ -30,6 +32,7 @@ target_include_directories(mcp_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src/mcp
     ${CMAKE_SOURCE_DIR}/src/transport
     ${CMAKE_SOURCE_DIR}/src/plugin
+    ${CMAKE_SOURCE_DIR}/src/llm
     ${CMAKE_SOURCE_DIR}/third_party
 )
 

@@ -70,8 +70,17 @@ int main(int argc, char* argv[]) {
         transport.set_on_message([&](const std::string& raw) {
             on_message(transport, raw);
         });
+
+        // 配置聊天功能
+        transport::ChatConfig chat_cfg;
+        chat_cfg.llm_base_url = config.llm_base_url;
+        chat_cfg.llm_model = config.llm_model;
+        chat_cfg.mcp_handler = &mcp_handler;
+        transport.set_chat_config(chat_cfg);
+
         transport.start(config.port);
         LOG_INFO("HTTP+SSE mode, listening on http://localhost:%d", config.port);
+        LOG_INFO("Chat available at http://localhost:%d/chat.html", config.port);
 
         // 主线程等待信号
         while (g_running) {

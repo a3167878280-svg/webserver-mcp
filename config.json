@@ -7,5 +7,7 @@
     "log_max_queue_size": 0,
     "close_log": 0,
     "thread_num": 4,
-    "plugin_dir": "./plugins"
+    "plugin_dir": "./plugins",
+    "llm_base_url": "https://api.openai.com/v1",
+    "llm_model": "gpt-4o"
 }

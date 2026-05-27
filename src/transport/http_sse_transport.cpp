@@ -1,9 +1,13 @@
 #include "http_sse_transport.h"
 #include "../log/log.h"
 #include "../common.h"
+#include "../mcp/mcp_handler.h"
+#include "../mcp/jsonrpc.h"
+#include "../llm/tool_orchestrator.h"
 #include "httplib.h"
 #include <random>
 #include <sstream>
+#include <fstream>
 
 namespace transport {
 
@@ -143,6 +147,58 @@ void HttpSseTransport::start(int port) {
             res.status = 202;
         });
 
+        // 聊天 API (SSE 流式)
+        srv.Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
+            auto processed = std::make_shared<bool>(false);
+            res.set_chunked_content_provider("text/event-stream",
+                [this, body = req.body, processed](size_t /*offset*/, httplib::DataSink& sink) {
+                    if (*processed) return true;  // 只处理一次
+                    *processed = true;
+                    handle_chat_request(body,
+                        [&sink](const std::string& event, const std::string& data) {
+                            std::string framed = "event: " + event + "\ndata: " + data + "\n\n";
+                            return sink.write(framed.data(), framed.size());
+                        });
+                    sink.done();  // 标记完成
+                    return true;
+                });
+        });
+
+        // 模型列表
+        srv.Get("/api/models", [this](const httplib::Request&, httplib::Response& res) {
+            nlohmann::json j;
+            j["models"] = nlohmann::json::array({
+                {{"id", "gpt-4o"}, {"name", "GPT-4o"}},
+                {{"id", "gpt-4o-mini"}, {"name", "GPT-4o Mini"}},
+                {{"id", "claude-sonnet-4-6"}, {"name", "Claude Sonnet 4.6"}},
+                {{"id", "claude-opus-4-7"}, {"name", "Claude Opus 4.7"}},
+                {{"id", "qwen2.5:7b"}, {"name", "Qwen 2.5 7B (Ollama)"}},
+                {{"id", "llama3:8b"}, {"name", "Llama 3 8B (Ollama)"}},
+            });
+            res.set_content(j.dump(), "application/json");
+        });
+
+        // 聊天页面
+        srv.Get("/chat.html", [](const httplib::Request&, httplib::Response& res) {
+            std::ifstream f("../chat/chat.html");
+            if (f) {
+                std::ostringstream oss;
+                oss << f.rdbuf();
+                res.set_content(oss.str(), "text/html");
+            } else {
+                // 尝试从 src 同级目录
+                std::ifstream f2("chat/chat.html");
+                if (f2) {
+                    std::ostringstream oss;
+                    oss << f2.rdbuf();
+                    res.set_content(oss.str(), "text/html");
+                } else {
+                    res.status = 404;
+                    res.set_content("chat.html not found", "text/plain");
+                }
+            }
+        });
+
         LOG_INFO("HTTP+SSE transport listening on port %d", m_port);
         srv.listen("0.0.0.0", m_port);
         LOG_INFO("HTTP server stopped");
@@ -213,6 +269,54 @@ void HttpSseTransport::set_current_session(const std::string& id) {
 std::string HttpSseTransport::current_session() {
     std::lock_guard<std::mutex> lk(m_current_id_mtx);
     return m_current_session_id;
+}
+
+void HttpSseTransport::handle_chat_request(
+    const std::string& body,
+    std::function<void(const std::string&, const std::string&)> sse_send) {
+
+    if (!m_chat_config.mcp_handler) {
+        sse_send("error", "Chat not configured");
+        return;
+    }
+
+    // 解析请求
+    nlohmann::json req_json;
+    try {
+        req_json = nlohmann::json::parse(body);
+    } catch (...) {
+        sse_send("error", "Invalid JSON");
+        return;
+    }
+
+    std::string user_message = req_json.value("message", "");
+    std::string api_key = req_json.value("api_key", "");
+    std::string model = req_json.value("model", m_chat_config.llm_model);
+    std::string base_url = req_json.value("base_url", m_chat_config.llm_base_url);
+
+    if (user_message.empty()) {
+        sse_send("error", "Missing message");
+        return;
+    }
+    if (api_key.empty()) {
+        sse_send("error", "Missing API key");
+        return;
+    }
+
+    // 解析历史记录
+    std::vector<llm::Message> history;
+    if (req_json.contains("history") && req_json["history"].is_array()) {
+        for (auto& h : req_json["history"]) {
+            llm::Message msg;
+            msg.role = h.value("role", "user");
+            msg.content = h.value("content", "");
+            history.push_back(msg);
+        }
+    }
+
+    // 编排工具调用
+    llm::ToolOrchestrator orch(*m_chat_config.mcp_handler);
+    orch.process(user_message, api_key, base_url, model, history, sse_send);
 }
 
 } // namespace transport

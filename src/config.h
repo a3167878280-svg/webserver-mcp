@@ -12,6 +12,8 @@ struct AppConfig {
     int close_log = 0;            // 1 = 关闭日志
     int thread_num = 4;
     std::string plugin_dir = "./plugins";
+    std::string llm_base_url = "https://api.openai.com/v1";
+    std::string llm_model = "gpt-4o";
 
     static AppConfig load_from_file(const std::string& path);
     static AppConfig load_default();

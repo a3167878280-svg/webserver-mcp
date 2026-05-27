@@ -22,6 +22,8 @@ AppConfig AppConfig::load_from_file(const std::string& path) {
         cfg.close_log           = j.value("close_log", cfg.close_log);
         cfg.thread_num          = j.value("thread_num", cfg.thread_num);
         cfg.plugin_dir          = j.value("plugin_dir", cfg.plugin_dir);
+        cfg.llm_base_url        = j.value("llm_base_url", cfg.llm_base_url);
+        cfg.llm_model           = j.value("llm_model", cfg.llm_model);
     } catch (const std::exception& e) {
         std::cerr << "Config parse error: " << e.what()
                   << ", using defaults." << std::endl;
