@@ -13,6 +13,7 @@ AppConfig AppConfig::load_from_file(const std::string& path) {
             return load_default();
         }
         nlohmann::json j = nlohmann::json::parse(f);
+        cfg.mode                = j.value("mode", cfg.mode);
         cfg.port                = j.value("port", cfg.port);
         cfg.log_file            = j.value("log_file", cfg.log_file);
         cfg.log_buf_size        = j.value("log_buf_size", cfg.log_buf_size);

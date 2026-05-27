@@ -13,6 +13,7 @@ set(SOURCES
     src/mcp/jsonrpc_serializer.cpp
     src/mcp/mcp_handler.cpp
     src/transport/stdio_transport.cpp
+    src/transport/http_sse_transport.cpp
     src/plugin/plugin_registry.cpp
     src/plugin/plugin_manager.cpp
     src/plugin/dynamic_library.cpp

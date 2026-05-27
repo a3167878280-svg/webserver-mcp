@@ -8,7 +8,8 @@
 |------|------|------|
 | **V1** | CMake 构建、JSON-RPC 2.0 协议、stdio 传输、基础 MCP 方法 | ✅ 已完成 |
 | **V2** | 插件系统 (dlopen + .so 动态加载) + FilePlugin | ✅ 已完成 |
-| V3 | HTTP+SSE 远程传输 (cpp-httplib) | 计划中 |
+| **V3** | HTTP+SSE 远程传输 (cpp-httplib) + 双模式切换 | ✅ 已完成 |
+| V4 | LLM 代理 + 聊天前端 | 计划中 |
 | V3 | HTTP+SSE 远程传输 (cpp-httplib) | 计划中 |
 | V4 | LLM 代理 + 聊天前端 | 计划中 |
 | V5 | 更多插件 (天气/代码审查/文件管理) | 计划中 |
@@ -153,6 +154,51 @@ tools/call file_list → 正确列出目录
 tools/call 错误路径   → isError=true
 tools/call 未知工具   → error -32603
 ```
+
+---
+
+## V3 新增功能 (2026-05-27)
+
+### HTTP+SSE 远程传输
+
+```
+src/transport/
+├── http_sse_transport.h/cpp   HTTP+SSE 传输实现
+third_party/
+└── httplib.h                   cpp-httplib header-only (v0.x)
+```
+
+### 传输模式切换
+
+通过 `config.json` 的 `mode` 字段选择：
+
+| mode | 传输方式 | 适用场景 |
+|------|----------|----------|
+| `"stdio"` | 标准输入/输出 | 本地 Claude Desktop 集成 |
+| `"http"` | HTTP+SSE (端口 9006) | Cherry Studio、远程客户端 |
+
+### HTTP 端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/sse?session_id=xxx` | GET | SSE 长连接，返回 endpoint + message 事件 |
+| `/message?session_id=xxx` | POST | JSON-RPC 请求，响应通过 SSE 异步返回 |
+| `/health` | GET | 健康检查，返回 "OK" |
+
+### 验证结果 (6/6 通过)
+
+```
+health check        → 200 OK
+SSE 连接           → event: endpoint (分配 session_id)
+POST initialize    → 202 Accepted + SSE event: message (initialize 响应)
+POST tools/list    → 202 Accepted + SSE event: message (tools 列表)
+POST tools/call    → 202 Accepted + SSE event: message (工具结果)
+stdio 模式兼容     → 原有功能正常
+```
+
+### 依赖新增
+
+- **cpp-httplib** — header-only HTTP/HTTPS 库 (`third_party/httplib.h`)
 
 ---
 

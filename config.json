@@ -1,4 +1,5 @@
 {
+    "mode": "stdio",
     "port": 9006,
     "log_file": "ServerLog",
     "log_buf_size": 8192,

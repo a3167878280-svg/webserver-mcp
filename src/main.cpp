@@ -6,18 +6,20 @@
 #include "mcp/jsonrpc_serializer.h"
 #include "mcp/mcp_handler.h"
 #include "transport/stdio_transport.h"
+#include "transport/http_sse_transport.h"
 #include "plugin/plugin_manager.h"
 #include <csignal>
+#include <atomic>
+#include <thread>
+#include <chrono>
 
 // 日志宏引用的全局变量
 int m_close_log = 0;
 
-static transport::StdioTransport* g_transport = nullptr;
+static std::atomic<bool> g_running{true};
 
 static void signal_handler(int /*sig*/) {
-    if (g_transport) {
-        g_transport->stop();
-    }
+    g_running = false;
 }
 
 int main(int argc, char* argv[]) {
@@ -33,7 +35,7 @@ int main(int argc, char* argv[]) {
     Log::get_instance()->init(config.log_file.c_str(), config.close_log,
                               config.log_buf_size, config.log_split_lines,
                               config.log_max_queue_size);
-    LOG_INFO("MCP Server starting (V1)...");
+    LOG_INFO("MCP Server starting (V3, mode=%s)...", config.mode.c_str());
 
     // 3. 注册退出信号
     signal(SIGINT, signal_handler);
@@ -47,31 +49,46 @@ int main(int argc, char* argv[]) {
     // 5. 创建 MCP 方法路由器 (注入插件注册表)
     mcp::McpHandler mcp_handler(plugin_mgr.registry());
 
-    // 6. 创建 stdio 传输层
-    transport::StdioTransport transport;
-    g_transport = &transport;
-
-    // 同步处理：收到消息 → 解析 → 路由 → 发送响应
-    transport.set_on_message([&](const std::string& raw_json) {
+    // 6. 消息处理回调 (两种 transport 共用)
+    auto on_message = [&](transport::Transport& t, const std::string& raw_json) {
         auto maybe_req = mcp::JsonRpcParser::parse(raw_json);
         if (!maybe_req.has_value()) {
             auto err = mcp::JsonRpcParser::make_parse_error(nlohmann::json(nullptr));
-            transport.send(mcp::JsonRpcSerializer::serialize(err));
+            t.send(mcp::JsonRpcSerializer::serialize(err));
             return;
         }
 
         auto maybe_resp = mcp_handler.handle(maybe_req.value());
         if (maybe_resp.has_value()) {
-            transport.send(mcp::JsonRpcSerializer::serialize(maybe_resp.value()));
+            t.send(mcp::JsonRpcSerializer::serialize(maybe_resp.value()));
         }
-    });
+    };
 
-    // 7. 启动传输层 (阻塞直到 stdin 关闭)
-    transport.start();
+    // 7. 根据模式选择传输层
+    if (config.mode == "http") {
+        transport::HttpSseTransport transport;
+        transport.set_on_message([&](const std::string& raw) {
+            on_message(transport, raw);
+        });
+        transport.start(config.port);
+        LOG_INFO("HTTP+SSE mode, listening on http://localhost:%d", config.port);
+
+        // 主线程等待信号
+        while (g_running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        transport.stop();
+    } else {
+        transport::StdioTransport transport;
+        transport.set_on_message([&](const std::string& raw) {
+            on_message(transport, raw);
+        });
+        transport.start();  // 阻塞直到 stdin 关闭
+        transport.stop();
+    }
 
     // 8. 清理
     LOG_INFO("MCP Server shutting down.");
-    transport.stop();
-
     return 0;
 }

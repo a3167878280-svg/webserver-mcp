@@ -3,6 +3,7 @@
 #include <string>
 
 struct AppConfig {
+    std::string mode = "stdio";   // "stdio" 或 "http"
     int port = 9006;
     std::string log_file = "ServerLog";
     int log_buf_size = 8192;
