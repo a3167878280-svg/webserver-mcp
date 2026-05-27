@@ -415,7 +415,9 @@ using socket_t = int;
 #endif
 #define SSL_get1_peer_certificate SSL_get_peer_certificate
 #elif OPENSSL_VERSION_NUMBER < 0x30000000L
-#error Sorry, OpenSSL versions prior to 3.0.0 are not supported
+// OpenSSL 1.1.x headers with 3.x runtime: define compatibility macro
+// SSL_get1_peer_certificate exists in 3.x .so, already declared extern
+#define SSL_get1_peer_certificate SSL_get_peer_certificate
 #endif
 
 #endif // CPPHTTPLIB_OPENSSL_SUPPORT

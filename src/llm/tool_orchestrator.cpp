@@ -2,6 +2,7 @@
 #include "../mcp/jsonrpc.h"
 #include "../log/log.h"
 #include "../common.h"
+#include <algorithm>
 
 namespace llm {
 
@@ -14,6 +15,7 @@ void ToolOrchestrator::process(
     const std::string& base_url,
     const std::string& model,
     const std::vector<Message>& history,
+    const std::vector<std::string>& disabled_tools,
     OrchestratorCallback callback) {
 
     // 构建初始 messages
@@ -29,7 +31,7 @@ void ToolOrchestrator::process(
         mcp::JsonRpcRequest req;
         req.jsonrpc = "2.0";
         req.method = "tools/list";
-        req.id = nullptr;
+        req.id = "internal";  // 必须有 id，否则被当通知不返回响应
         auto resp = m_handler.handle(req);
         if (resp.has_value()) {
             tools_result = resp->result;
@@ -45,6 +47,14 @@ void ToolOrchestrator::process(
             td.inputSchema = jt.value("inputSchema", nlohmann::json::object());
             tools.push_back(td);
         }
+    }
+
+    // 过滤禁用的工具
+    if (!disabled_tools.empty()) {
+        tools.erase(std::remove_if(tools.begin(), tools.end(),
+            [&](const mcp::ToolDef& t) {
+                return std::find(disabled_tools.begin(), disabled_tools.end(), t.name) != disabled_tools.end();
+            }), tools.end());
     }
 
     LlmClient client;
@@ -111,7 +121,7 @@ void ToolOrchestrator::process(
                 mcp::JsonRpcRequest req;
                 req.jsonrpc = "2.0";
                 req.method = "tools/call";
-                req.id = nullptr;
+                req.id = "internal";
                 req.params = {
                     {"name", tc.function_name},
                     {"arguments", args}
@@ -134,7 +144,7 @@ void ToolOrchestrator::process(
                 tool_msg.content = tool_result_text;
                 messages.push_back(tool_msg);
             }
-            continue;  // 继续循环，让 LLM 处理工具结果
+            continue;  // 继续循环，让 LLM 处理工具结果  // 继续循环，让 LLM 处理工具结果
         }
 
         // LLM 返回最终文本

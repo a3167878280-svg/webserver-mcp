@@ -4,6 +4,11 @@
 #include "../mcp/mcp_handler.h"
 #include "../mcp/jsonrpc.h"
 #include "../llm/tool_orchestrator.h"
+
+// 本机 OpenSSL 3.x 运行时库有此符号但 1.1.1 头文件未声明，手动声明
+#include <openssl/ssl.h>
+extern "C" X509* SSL_get1_peer_certificate(const SSL* ssl);
+
 #include "httplib.h"
 #include <random>
 #include <sstream>
@@ -186,6 +191,23 @@ void HttpSseTransport::start(int port) {
             res.set_content(j.dump(), "application/json");
         });
 
+        // 工具列表 (供前端插件面板使用)
+        srv.Get("/api/tools", [this](const httplib::Request&, httplib::Response& res) {
+            nlohmann::json j;
+            j["tools"] = nlohmann::json::array();
+            if (m_chat_config.mcp_handler) {
+                mcp::JsonRpcRequest req;
+                req.jsonrpc = "2.0";
+                req.method = "tools/list";
+                req.id = "internal";
+                auto resp = m_chat_config.mcp_handler->handle(req);
+                if (resp.has_value() && resp->result.contains("tools")) {
+                    j["tools"] = resp->result["tools"];
+                }
+            }
+            res.set_content(j.dump(), "application/json");
+        });
+
         // 聊天页面
         srv.Get("/chat.html", [](const httplib::Request&, httplib::Response& res) {
             std::ifstream f("../chat/chat.html");
@@ -301,6 +323,10 @@ void HttpSseTransport::handle_chat_request(
     std::string api_key = req_json.value("api_key", "");
     std::string model = req_json.value("model", m_chat_config.llm_model);
     std::string base_url = req_json.value("base_url", m_chat_config.llm_base_url);
+    std::vector<std::string> disabled_tools;
+    if (req_json.contains("disabled_tools") && req_json["disabled_tools"].is_array()) {
+        for (auto& d : req_json["disabled_tools"]) disabled_tools.push_back(d.get<std::string>());
+    }
 
     if (user_message.empty()) {
         sse_send("error", "Missing message");
@@ -322,9 +348,8 @@ void HttpSseTransport::handle_chat_request(
         }
     }
 
-    // 编排工具调用
     llm::ToolOrchestrator orch(*m_chat_config.mcp_handler);
-    orch.process(user_message, api_key, base_url, model, history, sse_send);
+    orch.process(user_message, api_key, base_url, model, history, disabled_tools, sse_send);
 }
 
 } // namespace transport

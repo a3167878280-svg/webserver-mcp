@@ -40,7 +40,16 @@ target_link_libraries(mcp_server PRIVATE
     pthread
     ${CMAKE_DL_LIBS}
     stdc++fs
+    ssl
+    crypto
+)
+
+target_compile_definitions(mcp_server PRIVATE
+    CPPHTTPLIB_OPENSSL_SUPPORT
 )
 
 # 插件子项目
 add_subdirectory(plugins/file_plugin)
+add_subdirectory(plugins/weather_plugin)
+add_subdirectory(plugins/review_plugin)
+add_subdirectory(plugins/bilibili_plugin)

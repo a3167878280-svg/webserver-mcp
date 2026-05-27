@@ -23,6 +23,7 @@ public:
         const std::string& base_url,
         const std::string& model,
         const std::vector<Message>& history,
+        const std::vector<std::string>& disabled_tools,
         OrchestratorCallback callback);
 
 private:
