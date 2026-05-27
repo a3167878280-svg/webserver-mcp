@@ -1,0 +1,30 @@
+# 编译产物
+*.o
+*.so
+*.a
+*.out
+server
+webbench
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 构建目录
+build/
+
+# 日志文件
+*.log
+ServerLog*
+
+# 环境变量
+.env
+
+# macOS
+.DS_Store
+
+# 临时文件
+*.tmp
