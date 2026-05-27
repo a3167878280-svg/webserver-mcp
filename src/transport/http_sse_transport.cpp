@@ -168,12 +168,20 @@ void HttpSseTransport::start(int port) {
         srv.Get("/api/models", [this](const httplib::Request&, httplib::Response& res) {
             nlohmann::json j;
             j["models"] = nlohmann::json::array({
-                {{"id", "gpt-4o"}, {"name", "GPT-4o"}},
-                {{"id", "gpt-4o-mini"}, {"name", "GPT-4o Mini"}},
-                {{"id", "claude-sonnet-4-6"}, {"name", "Claude Sonnet 4.6"}},
-                {{"id", "claude-opus-4-7"}, {"name", "Claude Opus 4.7"}},
+                {{"id", "gpt-4o"}, {"name", "GPT-4o (OpenAI)"}},
+                {{"id", "gpt-4o-mini"}, {"name", "GPT-4o Mini (OpenAI)"}},
+                {{"id", "gpt-4.1"}, {"name", "GPT-4.1 (OpenAI)"}},
+                {{"id", "claude-opus-4-7"}, {"name", "Claude Opus 4.7 (Anthropic)"}},
+                {{"id", "claude-sonnet-4-6"}, {"name", "Claude Sonnet 4.6 (Anthropic)"}},
+                {{"id", "claude-haiku-4-5"}, {"name", "Claude Haiku 4.5 (Anthropic)"}},
+                {{"id", "claude-3-5-sonnet-20241022"}, {"name", "Claude 3.5 Sonnet (Anthropic)"}},
+                {{"id", "claude-3-opus-20240229"}, {"name", "Claude 3 Opus (Anthropic)"}},
+                {{"id", "deepseek-v3"}, {"name", "DeepSeek V3"}},
+                {{"id", "deepseek-r1"}, {"name", "DeepSeek R1"}},
                 {{"id", "qwen2.5:7b"}, {"name", "Qwen 2.5 7B (Ollama)"}},
+                {{"id", "qwen2.5:14b"}, {"name", "Qwen 2.5 14B (Ollama)"}},
                 {{"id", "llama3:8b"}, {"name", "Llama 3 8B (Ollama)"}},
+                {{"id", "llama3:70b"}, {"name", "Llama 3 70B (Ollama)"}},
             });
             res.set_content(j.dump(), "application/json");
         });

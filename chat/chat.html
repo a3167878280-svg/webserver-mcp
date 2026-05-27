@@ -40,14 +40,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <label>Base URL</label>
   <input type="text" id="baseUrl" value="https://api.openai.com/v1" placeholder="https://api.openai.com/v1">
   <label>Model</label>
-  <select id="model">
-    <option value="gpt-4o">GPT-4o</option>
-    <option value="gpt-4o-mini">GPT-4o Mini</option>
-    <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-    <option value="claude-opus-4-7">Claude Opus 4.7</option>
+  <input type="text" id="model" value="gpt-4o" list="modelList" placeholder="Type or select model...">
+  <datalist id="modelList">
+    <option value="gpt-4o">GPT-4o (OpenAI)</option>
+    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
+    <option value="gpt-4.1">GPT-4.1 (OpenAI)</option>
+    <option value="claude-opus-4-7">Claude Opus 4.7 (Anthropic)</option>
+    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Anthropic)</option>
+    <option value="claude-haiku-4-5">Claude Haiku 4.5 (Anthropic)</option>
+    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Anthropic)</option>
+    <option value="claude-3-opus-20240229">Claude 3 Opus (Anthropic)</option>
+    <option value="deepseek-v3">DeepSeek V3</option>
+    <option value="deepseek-r1">DeepSeek R1</option>
     <option value="qwen2.5:7b">Qwen 2.5 7B (Ollama)</option>
+    <option value="qwen2.5:14b">Qwen 2.5 14B (Ollama)</option>
     <option value="llama3:8b">Llama 3 8B (Ollama)</option>
-  </select>
+    <option value="llama3:70b">Llama 3 70B (Ollama)</option>
+  </datalist>
   <label>History Rounds</label>
   <select id="historyRounds">
     <option value="5">5 rounds</option>
@@ -76,10 +85,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 });
 
 // Save settings on change
-['apiKey','baseUrl','model','historyRounds'].forEach(k=>{
+['apiKey','baseUrl','historyRounds'].forEach(k=>{
   document.getElementById(k).addEventListener('change',function(){
     localStorage.setItem('chat_'+k,this.value);
   });
+});
+// model uses input event (free-text, not select)
+document.getElementById('model').addEventListener('input',function(){
+  localStorage.setItem('chat_model',this.value);
 });
 
 let isStreaming = false;
