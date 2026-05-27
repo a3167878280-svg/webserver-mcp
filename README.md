@@ -10,7 +10,8 @@
 | **V2** | 插件系统 (dlopen + .so 动态加载) + FilePlugin | ✅ 已完成 |
 | **V3** | HTTP+SSE 远程传输 (cpp-httplib) + 双模式切换 | ✅ 已完成 |
 | **V4** | LLM 代理 + 聊天前端 (工具编排) | ✅ 已完成 |
-| V5 | 更多插件 (天气/代码审查) | 计划中 |
+| **V5** | 3 个新插件 + Anthropic API + 前端插件面板 | ✅ 已完成 |
+| V6 | 多对话管理 (线程池 + 切换 + 日志) | 开发中 |
 
 ## V1 新增功能 (2026-05-27)
 
@@ -197,6 +198,45 @@ stdio 模式兼容     → 原有功能正常
 ### 依赖新增
 
 - **cpp-httplib** — header-only HTTP/HTTPS 库 (`third_party/httplib.h`)
+
+---
+
+## V5 新增功能 (2026-05-27)
+
+### 新增插件 (7 个工具)
+
+| 插件 | 工具 | 功能 |
+|------|------|------|
+| weather_plugin | `query_weather` | 查询城市天气 (wttr.in API) |
+| review_plugin | `code_review`, `code_stats` | 代码审查 + 统计 |
+| bilibili_plugin | `up_videos`, `up_info`, `hot` | B站UP主视频/热门 (公开API) |
+
+### Anthropic Messages API 适配
+
+- 完整支持 Anthropic 流式格式 (thinking_delta / input_json_delta / tool_use)
+- OpenAI↔Anthropic 消息格式自动转换
+- DeepSeek 兼容: tool_result 简化为纯文本注入
+
+### 前端插件面板
+
+- 侧边栏显示所有工具 + 开关按钮
+- 禁用工具不会传给 LLM
+- 开关状态 localStorage 持久化
+- 自定义模型名输入 (datalist + 自由输入)
+
+### 工具编排
+
+```
+用户消息 → LLM (含 tools)
+  → LLM 返回 tool_call → 执行 MCP 工具
+  → 结果反馈 LLM → 循环 → 生成最终回复
+```
+
+### API 端点新增
+
+| 端点 | 功能 |
+|------|------|
+| `GET /api/tools` | 返回当前可用工具列表 |
 
 ---
 
