@@ -1,0 +1,10 @@
+{
+    "port": 9006,
+    "log_file": "ServerLog",
+    "log_buf_size": 8192,
+    "log_split_lines": 5000000,
+    "log_max_queue_size": 0,
+    "close_log": 0,
+    "thread_num": 4,
+    "plugin_dir": "./plugins"
+}

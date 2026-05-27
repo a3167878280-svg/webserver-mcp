@@ -28,3 +28,4 @@ ServerLog*
 
 # 临时文件
 *.tmp
+build/
