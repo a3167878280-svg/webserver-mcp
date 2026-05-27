@@ -13,6 +13,9 @@ set(SOURCES
     src/mcp/jsonrpc_serializer.cpp
     src/mcp/mcp_handler.cpp
     src/transport/stdio_transport.cpp
+    src/plugin/plugin_registry.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/dynamic_library.cpp
 )
 
 add_executable(mcp_server ${SOURCES})
@@ -25,10 +28,15 @@ target_include_directories(mcp_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src/threadpool
     ${CMAKE_SOURCE_DIR}/src/mcp
     ${CMAKE_SOURCE_DIR}/src/transport
+    ${CMAKE_SOURCE_DIR}/src/plugin
     ${CMAKE_SOURCE_DIR}/third_party
 )
 
 target_link_libraries(mcp_server PRIVATE
     pthread
     ${CMAKE_DL_LIBS}
+    stdc++fs
 )
+
+# 插件子项目
+add_subdirectory(plugins/file_plugin)

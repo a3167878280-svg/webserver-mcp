@@ -6,6 +6,7 @@
 #include "mcp/jsonrpc_serializer.h"
 #include "mcp/mcp_handler.h"
 #include "transport/stdio_transport.h"
+#include "plugin/plugin_manager.h"
 #include <csignal>
 
 // 日志宏引用的全局变量
@@ -38,10 +39,15 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // 4. 创建 MCP 方法路由器
-    mcp::McpHandler mcp_handler;
+    // 4. 加载插件
+    plugin::PluginManager plugin_mgr;
+    int loaded = plugin_mgr.load_all(config.plugin_dir);
+    LOG_INFO("Loaded %d plugin(s) from %s", loaded, config.plugin_dir.c_str());
 
-    // 5. 创建 stdio 传输层（线程池暂不使用，stdio 模式串行处理即可）
+    // 5. 创建 MCP 方法路由器 (注入插件注册表)
+    mcp::McpHandler mcp_handler(plugin_mgr.registry());
+
+    // 6. 创建 stdio 传输层
     transport::StdioTransport transport;
     g_transport = &transport;
 
@@ -60,10 +66,10 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    // 6. 启动传输层 (阻塞直到 stdin 关闭)
+    // 7. 启动传输层 (阻塞直到 stdin 关闭)
     transport.start();
 
-    // 7. 清理
+    // 8. 清理
     LOG_INFO("MCP Server shutting down.");
     transport.stop();
 

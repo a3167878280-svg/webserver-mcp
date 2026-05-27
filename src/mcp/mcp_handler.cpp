@@ -1,9 +1,15 @@
 #include "mcp_handler.h"
 #include "jsonrpc_parser.h"
+#include "../plugin/plugin_registry.h"
 
 namespace mcp {
 
 McpHandler::McpHandler() {
+    register_handlers();
+}
+
+McpHandler::McpHandler(plugin::PluginRegistry& registry)
+    : m_registry(&registry) {
     register_handlers();
 }
 
@@ -16,6 +22,9 @@ void McpHandler::register_handlers() {
     };
     m_routes["tools/list"] = [this](const nlohmann::json& p) {
         return handle_tools_list(p);
+    };
+    m_routes["tools/call"] = [this](const nlohmann::json& p) {
+        return handle_tools_call(p);
     };
     m_routes["notifications/initialized"] = [this](const nlohmann::json& p) {
         return handle_notifications_initialized(p);
@@ -70,9 +79,30 @@ nlohmann::json McpHandler::handle_ping(const nlohmann::json& /*params*/) {
 }
 
 nlohmann::json McpHandler::handle_tools_list(const nlohmann::json& /*params*/) {
+    nlohmann::json tools_arr = nlohmann::json::array();
+    if (m_registry) {
+        auto all = m_registry->get_all_tools();
+        for (auto& tool : all) {
+            tools_arr.push_back(tool.to_json());
+        }
+    }
     nlohmann::json j;
-    j["tools"] = nlohmann::json::array();  // V1: 空列表，插件在 V2 加入
+    j["tools"] = std::move(tools_arr);
     return j;
+}
+
+nlohmann::json McpHandler::handle_tools_call(const nlohmann::json& params) {
+    ToolCallParams p = ToolCallParams::from_json(params);
+
+    if (!m_registry) {
+        throw std::runtime_error("No plugin registry configured");
+    }
+
+    auto result = m_registry->call_tool(p.name, p.arguments);
+    if (!result.has_value()) {
+        throw std::runtime_error("Unknown tool: " + p.name);
+    }
+    return result->to_json();
 }
 
 nlohmann::json McpHandler::handle_notifications_initialized(const nlohmann::json& /*params*/) {

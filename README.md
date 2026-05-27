@@ -7,7 +7,8 @@
 | 版本 | 内容 | 状态 |
 |------|------|------|
 | **V1** | CMake 构建、JSON-RPC 2.0 协议、stdio 传输、基础 MCP 方法 | ✅ 已完成 |
-| V2 | 插件系统 (dlopen + .so 动态加载) | 计划中 |
+| **V2** | 插件系统 (dlopen + .so 动态加载) + FilePlugin | ✅ 已完成 |
+| V3 | HTTP+SSE 远程传输 (cpp-httplib) | 计划中 |
 | V3 | HTTP+SSE 远程传输 (cpp-httplib) | 计划中 |
 | V4 | LLM 代理 + 聊天前端 | 计划中 |
 | V5 | 更多插件 (天气/代码审查/文件管理) | 计划中 |
@@ -95,6 +96,63 @@ printf 'Content-Length: %d\r\n\r\n%s' "$LEN" "$BODY" | ./mcp_server
 - log 宏引用 `m_close_log` 全局变量，通过 `src/common.h` 声明 + `main.cpp` 定义实现
 - 线程池已改为泛型任务执行，接受 `std::function<void()>` 类型
 - stdio 传输层 `start()` 为阻塞调用（内部 join 读取线程），主线程等待 stdin EOF 或信号退出
+
+---
+
+## V2 新增功能 (2026-05-27)
+
+### 插件系统
+
+```
+src/plugin/
+├── plugin_interface.h       IPlugin 抽象基类 + extern "C" dlopen 入口
+├── plugin_registry.h/cpp    tool_name → {IPlugin*, ToolDef} 注册表
+├── dynamic_library.h/cpp    跨平台 dlopen/LoadLibrary 封装
+└── plugin_manager.h/cpp     插件扫描、加载、生命周期管理
+
+plugins/file_plugin/
+├── file_plugin.h/cpp        FilePlugin (file_read + file_list)
+└── CMakeLists.txt           独立编译为 .so
+```
+
+### 插件接口
+
+```cpp
+class IPlugin {
+    virtual const char* name() const = 0;
+    virtual const char* version() const = 0;
+    virtual vector<ToolDef> get_tools() const = 0;
+    virtual ToolCallResult call_tool(name, args) = 0;
+};
+
+// .so 导出 (extern "C" 防止 name mangling)
+extern "C" IPlugin* create_plugin();
+extern "C" void destroy_plugin(IPlugin*);
+```
+
+### 新增 MCP 方法
+
+| Method | 功能 |
+|--------|------|
+| `tools/list` | 返回已加载插件提供的工具列表 |
+| `tools/call` | 按名称调用工具，参数校验后分发到插件 |
+
+### FilePlugin 工具
+
+| 工具 | 参数 | 功能 |
+|------|------|------|
+| `file_read` | `path: string` (绝对路径) | 读取文件内容 |
+| `file_list` | `directory: string` (绝对路径) | 列出目录内容 |
+
+### 验证结果 (5/5 通过)
+
+```
+tools/list           → 返回 2 个工具定义
+tools/call file_read → 正确返回文件内容
+tools/call file_list → 正确列出目录
+tools/call 错误路径   → isError=true
+tools/call 未知工具   → error -32603
+```
 
 ---
 
