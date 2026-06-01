@@ -17,6 +17,7 @@ set(SOURCES
     src/plugin/plugin_registry.cpp
     src/plugin/plugin_manager.cpp
     src/plugin/dynamic_library.cpp
+    src/server/conversation_manager.cpp
     src/llm/llm_client.cpp
     src/llm/tool_orchestrator.cpp
 )
@@ -33,6 +34,7 @@ target_include_directories(mcp_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src/transport
     ${CMAKE_SOURCE_DIR}/src/plugin
     ${CMAKE_SOURCE_DIR}/src/llm
+    ${CMAKE_SOURCE_DIR}/src/server
     ${CMAKE_SOURCE_DIR}/third_party
 )
 
@@ -53,3 +55,4 @@ add_subdirectory(plugins/file_plugin)
 add_subdirectory(plugins/weather_plugin)
 add_subdirectory(plugins/review_plugin)
 add_subdirectory(plugins/bilibili_plugin)
+add_subdirectory(plugins/command_plugin)

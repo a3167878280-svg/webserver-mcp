@@ -119,6 +119,65 @@ mcp::ToolCallResult FilePlugin::handle_file_list(const nlohmann::json& args) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Resource 接口 — 与上面的 Tool 接口共享底层文件读取能力
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 暴露可用资源列表
+ *
+ * Tool vs Resource 的核心区别在这里一目了然:
+ *   Tool file_read:  LLM 必须知道路径 → 主动传入 path 参数
+ *   Resource:        服务器预先注册 URI → 客户端浏览列表 → 点击读取
+ *
+ * 同一个底层能力 (读文件)，两种不同的交互模式。
+ */
+std::vector<mcp::ResourceDef> FilePlugin::get_resources() const {
+    std::vector<mcp::ResourceDef> resources;
+
+    // 注册 config://server — 即使不知道 config.json 在哪也能访问
+    mcp::ResourceDef config_res;
+    config_res.uri = "config://server";
+    config_res.name = "服务器配置";
+    config_res.description = "当前 MCP 服务器运行配置 (config.json 内容)";
+    config_res.mimeType = "application/json";
+    resources.push_back(config_res);
+
+    return resources;
+}
+
+mcp::ResourceReadResult FilePlugin::read_resource(const std::string& uri) {
+    if (uri == "config://server") {
+        return read_file_resource("config.json", "application/json");
+    }
+    return {};  // 未知资源
+}
+
+// 辅助函数: 读文件并包装成 ResourceReadResult
+mcp::ResourceReadResult FilePlugin::read_file_resource(
+    const std::string& path, const std::string& mimeType) {
+
+    mcp::ResourceReadResult result;
+    try {
+        std::ifstream f(path);
+        if (!f.is_open()) {
+            // 资源不存在 → 返回空，McpHandler 会抛异常
+            return {};
+        }
+        std::ostringstream oss;
+        oss << f.rdbuf();
+
+        mcp::ResourceContent rc;
+        rc.uri = "file://" + fs::absolute(path).string();
+        rc.mimeType = mimeType;
+        rc.text = oss.str();
+        result.contents.push_back(rc);
+    } catch (...) {
+        return {};
+    }
+    return result;
+}
+
 // dlopen 入口
 extern "C" plugin::IPlugin* create_plugin() {
     return new FilePlugin();

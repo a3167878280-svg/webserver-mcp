@@ -31,6 +31,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .plugin-item{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer}
 .plugin-item input{margin:0;accent-color:#e94560}
 .plugin-item.disabled{opacity:.4;text-decoration:line-through}
+.conv-item{display:flex;align-items:center;padding:6px 8px;margin:2px 0;border-radius:4px;cursor:pointer;color:#aaa;background:#0a1628;font-size:12px;gap:4px}
+.conv-item:hover{background:#16213e}
+.conv-item.active{background:#e94560;color:#fff}
+.conv-item .del{opacity:0;margin-left:auto;color:#f88;background:none;border:none;cursor:pointer;font-size:14px}
+.conv-item:hover .del{opacity:1}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 </style>
 </head>
@@ -38,6 +43,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <div class="sidebar">
   <h2>TinyMCP Chat</h2>
+  <div style="display:flex;gap:4px;margin-bottom:8px">
+    <button onclick="newConversation()" style="flex:1;padding:6px;background:#e94560;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">+ New Chat</button>
+  </div>
+  <div id="convList" style="max-height:180px;overflow-y:auto;margin-bottom:8px;font-size:12px"></div>
   <label>API Key</label>
   <input type="password" id="apiKey" placeholder="sk-... or ollama (empty)">
   <label>Base URL</label>
@@ -103,6 +112,71 @@ document.getElementById('model').addEventListener('input',function(){
 let isStreaming = false;
 let conversationHistory = [];
 let availableTools = [];
+let activeConvId = localStorage.getItem('chat_active_conv') || '';
+let conversations = [];
+
+// ── 对话管理 ──
+async function loadConversations() {
+  try {
+    const resp = await fetch('/api/conversations');
+    conversations = await resp.json();
+    renderConvList();
+  } catch(e) { setTimeout(loadConversations, 2000); }
+}
+function renderConvList() {
+  const container = document.getElementById('convList');
+  container.innerHTML = conversations.map(c =>
+    '<div class="conv-item' + (c.id === activeConvId ? ' active' : '') + '" ' +
+    'onclick="switchConversation(\'' + c.id + '\')">' +
+    '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' +
+    c.title + '</span>' +
+    '<button class="del" onclick="event.stopPropagation();deleteConversation(\'' + c.id + '\')">x</button>' +
+    '</div>'
+  ).join('');
+}
+async function newConversation() {
+  const resp = await fetch('/api/conversations', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title: '新对话 ' + new Date().toLocaleTimeString()})
+  });
+  const c = await resp.json();
+  activeConvId = c.id;
+  localStorage.setItem('chat_active_conv', activeConvId);
+  conversationHistory = [];
+  document.getElementById('messages').innerHTML = '';
+  addMessage('assistant', '新对话已创建，开始聊天吧！');
+  loadConversations();
+}
+async function switchConversation(id) {
+  activeConvId = id;
+  localStorage.setItem('chat_active_conv', activeConvId);
+  document.getElementById('messages').innerHTML = '';
+  addMessage('assistant', '加载中...');
+  try {
+    const resp = await fetch('/api/conversations');
+    const list = await resp.json();
+    const conv = list.find(c => c.id === id);
+    // 从服务器加载历史 (GET /api/conversations 目前不含历史，用独立请求)
+    document.getElementById('messages').innerHTML = '';
+    addMessage('assistant', '已切换到: ' + (conv ? conv.title : id));
+  } catch(e) {}
+  // 清空历史，由后端管理
+  conversationHistory = [];
+  renderConvList();
+}
+async function deleteConversation(id) {
+  if (!confirm('删除此对话及日志？')) return;
+  await fetch('/api/conversations?id=' + id, {method: 'DELETE'});
+  if (activeConvId === id) {
+    activeConvId = '';
+    localStorage.removeItem('chat_active_conv');
+    document.getElementById('messages').innerHTML = '';
+    addMessage('assistant', '对话已删除，请新建对话');
+  }
+  loadConversations();
+}
+loadConversations();
 
 // 加载插件列表
 async function loadPlugins() {
@@ -153,7 +227,10 @@ function addMessage(role, text, id) {
 function clearChat() {
   document.getElementById('messages').innerHTML = '';
   conversationHistory = [];
-  addMessage('assistant', 'Chat cleared. How can I help?');
+  activeConvId = '';
+  localStorage.removeItem('chat_active_conv');
+  addMessage('assistant', 'Chat cleared. Start a new conversation!');
+  loadConversations();
 }
 
 async function send() {
@@ -179,6 +256,19 @@ async function send() {
   const baseUrl = document.getElementById('baseUrl').value.trim();
   const maxHistory = parseInt(document.getElementById('historyRounds').value) * 2;
 
+  // 自动创建对话
+  if (!activeConvId) {
+    const r = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title: msg.substring(0, 30)})
+    });
+    const c = await r.json();
+    activeConvId = c.id;
+    localStorage.setItem('chat_active_conv', activeConvId);
+    loadConversations();
+  }
+
   // Trim history
   const history = conversationHistory.slice(-maxHistory);
 
@@ -191,6 +281,7 @@ async function send() {
         api_key: apiKey,
         model: model,
         base_url: baseUrl,
+        conversation_id: activeConvId,
         history: history,
         disabled_tools: JSON.parse(localStorage.getItem('chat_disabled_tools') || '[]')
       })

@@ -30,6 +30,8 @@ private:
     nlohmann::json handle_ping(const nlohmann::json& params);
     nlohmann::json handle_tools_list(const nlohmann::json& params);
     nlohmann::json handle_tools_call(const nlohmann::json& params);
+    nlohmann::json handle_resources_list(const nlohmann::json& params);
+    nlohmann::json handle_resources_read(const nlohmann::json& params);
     nlohmann::json handle_notifications_initialized(const nlohmann::json& params);
 };
 

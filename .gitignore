@@ -19,6 +19,10 @@ build/
 # 日志文件
 *.log
 ServerLog*
+*_ServerLog
+
+# 对话历史
+logs/
 
 # 环境变量
 .env
