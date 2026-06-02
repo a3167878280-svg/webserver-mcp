@@ -1,6 +1,6 @@
 # TinyMCP — C++ MCP 协议服务器
 
-基于 C++17 的 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，**完整实现 MCP 三大能力 (Tools + Resources + Prompts)**，通过插件化架构和双传输模式为 AI 客户端提供标准化工具调用和对话模板。
+基于 C++17 的 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，**完整实现 MCP 三大能力 (Tools + Resources + Prompts)**，支持本地 LLM 离线运行，通过插件化架构和双传输模式为 AI 客户端提供标准化工具调用和对话模板。
 
 ## 项目结构
 
@@ -175,14 +175,33 @@ cmake ..
 make -j$(nproc)
 ```
 
+### 启动本地 LLM（可选，离线运行）
+
+项目自带 llama-server 集成，可使用本地模型完全离线运行：
+
+```bash
+# 启动 llama-server (使用已下载的 Qwen2.5-1.5B 模型, CUDA 加速)
+/home/nvidia/llama.cpp/build/bin/llama-server \
+  --model /media/data/dongyuan/LLM_Voice_Flow-master/llm/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  --host 0.0.0.0 --port 8080 --ctx-size 4096 --jinja --api-key "local" &
+
+# 模型信息: Qwen2.5-1.5B-Instruct, Q4_K_M 量化, 1.1GB, 支持 CUDA (Orin GPU)
+# llama-server 暴露 OpenAI 兼容 API: http://localhost:8080/v1
+```
+
 ### 运行
 
 ```bash
-# HTTP 模式 (浏览器聊天)
+# HTTP 模式
 ./build/mcp_server
 
-# 浏览器打开
+# 浏览器打开 (已预配置本地 LLM，开箱即用)
 # http://localhost:9006/chat.html
+
+# 默认配置:
+#   Base URL: http://localhost:8080/v1
+#   API Key:  local
+#   Model:    qwen2.5-1.5b
 ```
 
 ### 配置 (`config.json`)
@@ -261,4 +280,5 @@ ToolOrchestrator (Agent 循环, 最多 10 轮)
 | V4 | LLM 代理 (OpenAI API) + 聊天前端 |
 | V5 | 4 个新插件, Anthropic API, 插件面板, 工具编排 |
 | V6 | 多对话管理, 清理死代码, 代码注释 |
-| **V7** | **Resources + Prompts 支持, 9 个 MCP 方法, 3 个 Prompt 模板, 项目重命名, 完善文档** |
+| V7 | Resources + Prompts 支持, 9 个 MCP 方法, 3 个 Prompt 模板, 12 个工具 |
+| **V8** | **本地 LLM 离线支持, HTTP 客户端适配, 非流式工具调用, 对话历史面板, 下载导出** |
