@@ -346,6 +346,37 @@ void HttpSseTransport::start(int port) {
             res.set_content(ok ? "{\"ok\":true}" : "{\"ok\":false}", "application/json");
         });
 
+        // 获取对话消息历史 (前端加载历史对话)
+        srv.Get(R"(/api/conversations/([^/]+)/messages)", [this](const httplib::Request& req, httplib::Response& res) {
+            if (!m_chat_config.conv_manager) { res.status = 500; return; }
+            std::string id = req.matches[1];
+            auto history = m_chat_config.conv_manager->get_history(id);
+            nlohmann::json arr = nlohmann::json::array();
+            for (auto& h : history) {
+                nlohmann::json m;
+                m["role"] = h.role;
+                m["content"] = h.content;
+                arr.push_back(m);
+            }
+            res.set_content(arr.dump(), "application/json");
+        });
+
+        // 导出对话为文本文件
+        srv.Get(R"(/api/conversations/([^/]+)/export)", [this](const httplib::Request& req, httplib::Response& res) {
+            if (!m_chat_config.conv_manager) { res.status = 500; return; }
+            std::string id = req.matches[1];
+            auto history = m_chat_config.conv_manager->get_history(id);
+            std::ostringstream oss;
+            oss << "=== Conversation History ===\n";
+            oss << "ID: " << id << "\n\n";
+            for (auto& h : history) {
+                oss << "[" << h.role << "] " << h.content << "\n\n";
+            }
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
+            res.set_header("Content-Disposition", "attachment; filename=conversation_" + id + ".txt");
+            res.set_content(oss.str(), "text/plain");
+        });
+
         // 聊天页面
         srv.Get("/chat.html", [](const httplib::Request&, httplib::Response& res) {
             std::ifstream f("../chat/chat.html");

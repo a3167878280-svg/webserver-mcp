@@ -29,6 +29,8 @@
 #include "httplib.h"
 #include <sstream>
 #include <algorithm>
+#include <memory>
+#include <type_traits>
 
 namespace llm {
 
@@ -136,18 +138,12 @@ bool LlmClient::chat_openai(
     const std::vector<mcp::ToolDef>& tools,
     StreamCallback callback) {
 
-    httplib::SSLClient cli(host);
-    cli.set_connection_timeout(10);
-    cli.set_read_timeout(120);   // LLM 推理可能很慢
-    cli.set_write_timeout(30);
-    cli.enable_server_certificate_verification(false);
-
-    // ── 构建请求体 ──
+    // ── 构建请求体 (在 lambda 之前) ──
+    std::vector<ToolCall> accumulated_tools;
     nlohmann::json req_body;
     req_body["model"] = model;
-    req_body["stream"] = true;   // 必须开流式，否则 response 全到了才能读
-
-    // 消息数组: user/assistant/tool 交替
+    // 本地 llama.cpp 不支持 stream + tools 同时用，有工具时走非流式
+    req_body["stream"] = tools.empty();
     nlohmann::json msgs_arr = nlohmann::json::array();
     for (const auto& msg : messages) {
         nlohmann::json m;
@@ -158,9 +154,6 @@ bool LlmClient::chat_openai(
         msgs_arr.push_back(m);
     }
     req_body["messages"] = msgs_arr;
-
-    // 工具定义 → OpenAI function calling 格式
-    // OpenAI 的 tools 格式: {type:"function", function:{name, description, parameters}}
     if (!tools.empty()) {
         nlohmann::json tools_arr = nlohmann::json::array();
         for (const auto& tool : tools) {
@@ -168,75 +161,70 @@ bool LlmClient::chat_openai(
             t["type"] = "function";
             t["function"]["name"] = tool.name;
             t["function"]["description"] = tool.description;
-            t["function"]["parameters"] = tool.inputSchema;  // JSON Schema 直接透传
+            t["function"]["parameters"] = tool.inputSchema;
             tools_arr.push_back(t);
         }
         req_body["tools"] = tools_arr;
-        req_body["tool_choice"] = "auto";  // LLM 自行决定是否调工具
+        req_body["tool_choice"] = "auto";
     }
-
     std::string body = req_body.dump();
-
     httplib::Headers headers = {
         {"Content-Type", "application/json"},
         {"Authorization", "Bearer " + api_key}
     };
 
-    // 累积工具调用 — 因为流式 chunk 中 tool_calls 是分片到达的
-    // 比如 query_weather({"city":"Beijing"}) 可能分成 5 个 chunk 到达
-    std::vector<ToolCall> accumulated_tools;
-
-    /**
-     * httplib 的流式 content receiver — 每收到一块 TCP 数据就调一次
-     *
-     * SSE 数据格式:
-     *   data: <json>\n\n    ← 标准 chunk
-     *   data: [DONE]\n\n     ← 流结束信号
-     *   : heartbeat\n\n      ← 心跳行 (以 : 开头，跳过)
-     *
-     * 注意: 一次回调可能包含多行 "data:" (TCP 粘包)
-     */
-    auto res = cli.Post(path, headers, body, "application/json",
-        [&](const char* data, size_t len) {
-            if (len == 0) return true;
-            std::string chunk(data, len);
-            std::istringstream stream(chunk);
-            std::string line;
-            while (std::getline(stream, line)) {
-                // 跳过空行和心跳行
-                if (line.empty() || line[0] == ':') continue;
-                if (line.rfind("data: ", 0) != 0) continue;
-                std::string json_str = line.substr(6);  // 去掉 "data: " 前缀
-
-                // [DONE] = 流结束
-                if (json_str == "[DONE]") { callback("", accumulated_tools, true); return true; }
-
-                // 解析单个 chunk → delta 文本 / tool_call 分片 / finish 标记
-                std::string delta; std::vector<ToolCall> tc; bool finished = false;
-                parse_openai_chunk(json_str, delta, tc, finished);
-
-                // 普通文本 → 立即推送 (打字效果)
-                if (!delta.empty()) callback(delta, {}, false);
-
-                // 工具调用分片 → 累积到 accumulated_tools (按 id 合并)
-                for (auto& t : tc) {
-                    bool found = false;
-                    for (auto& at : accumulated_tools) {
-                        if (at.id == t.id) {
-                            // 同一个 tool_call 的后续分片: 拼接 function_name 和 arguments
-                            at.function_name += t.function_name;
-                            at.arguments += t.arguments;
-                            found = true; break;
-                        }
-                    }
-                    if (!found && !t.id.empty()) accumulated_tools.push_back(t);
+    // SSE 流回调 (捕获所有局部变量)
+    auto sse_handler = [&](const char* data, size_t len) -> bool {
+        if (len == 0) return true;
+        std::string chunk(data, len);
+        std::istringstream stream(chunk);
+        std::string line;
+        while (std::getline(stream, line)) {
+            if (line.empty() || line[0] == ':') continue;
+            if (line.rfind("data: ", 0) != 0) continue;
+            std::string json_str = line.substr(6);
+            if (json_str == "[DONE]") { callback("", accumulated_tools, true); return true; }
+            std::string delta; std::vector<ToolCall> tc; bool finished = false;
+            parse_openai_chunk(json_str, delta, tc, finished);
+            if (!delta.empty()) callback(delta, {}, false);
+            for (auto& t : tc) {
+                bool found = false;
+                for (auto& at : accumulated_tools) {
+                    if (at.id == t.id) { at.function_name += t.function_name; at.arguments += t.arguments; found = true; break; }
                 }
-
-                // finish + 有工具调用 → 通知上层: LLM 要求调工具
-                if (finished && !accumulated_tools.empty()) callback("", accumulated_tools, true);
+                if (!found && !t.id.empty()) accumulated_tools.push_back(t);
             }
-            return true;
-        });
+            if (finished && !accumulated_tools.empty()) callback("", accumulated_tools, true);
+        }
+        return true;
+    };
+
+    // 选择 HTTP 或 HTTPS 客户端
+    httplib::Result res;
+    if (host.find("localhost") != std::string::npos || host.find("127.0.0.1") != std::string::npos || host.find("0.0.0.0") != std::string::npos) {
+        httplib::Client cli("http://" + host);
+        cli.set_connection_timeout(10);
+        cli.set_read_timeout(120);
+        cli.set_write_timeout(30);
+        if (tools.empty()) {
+            // 流式: 用 content receiver
+            res = cli.Post(path, headers, body, "application/json", sse_handler);
+        } else {
+            // 非流式: 不用 receiver, 直接读 body
+            res = cli.Post(path, headers, body, "application/json");
+        }
+    } else {
+        httplib::SSLClient cli(host);
+        cli.set_connection_timeout(10);
+        cli.set_read_timeout(120);
+        cli.set_write_timeout(30);
+        cli.enable_server_certificate_verification(false);
+        if (tools.empty()) {
+            res = cli.Post(path, headers, body, "application/json", sse_handler);
+        } else {
+            res = cli.Post(path, headers, body, "application/json");
+        }
+    }
 
     if (!res) {
         LOG_ERROR("OpenAI API error: %s", httplib::to_string(res.error()).c_str());
@@ -246,6 +234,42 @@ bool LlmClient::chat_openai(
         LOG_ERROR("OpenAI API status %d: %.500s", res->status, res->body.c_str());
         return false;
     }
+
+    // 非流式模式: 解析完整的 response body
+    if (!tools.empty() && !res->body.empty()) {
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
+                auto& choice = j["choices"][0];
+                auto& msg = choice["message"];
+                // 提取文本内容 (可能为 null)
+                if (msg.contains("content") && !msg["content"].is_null()) {
+                    callback(msg["content"].get<std::string>(), {}, false);
+                }
+                // 提取工具调用
+                if (msg.contains("tool_calls") && msg["tool_calls"].is_array() && !msg["tool_calls"].empty()) {
+                    std::vector<ToolCall> tcs;
+                    for (auto& tc : msg["tool_calls"]) {
+                        ToolCall t;
+                        t.id = tc.value("id", "");
+                        if (tc.contains("function")) {
+                            t.function_name = tc["function"].value("name", "");
+                            t.arguments = tc["function"].value("arguments", "");
+                        }
+                        tcs.push_back(t);
+                    }
+                    callback("", tcs, true);
+                }
+                else if (msg.contains("content") && !msg["content"].is_null()) {
+                    // 只有文本，无工具调用
+                    callback("", {}, true);
+                }
+            }
+        } catch (...) {
+            fprintf(stderr, "DEBUG L: failed to parse non-stream response\n");
+        }
+    }
+
     return true;
 }
 

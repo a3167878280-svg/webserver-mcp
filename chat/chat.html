@@ -34,9 +34,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .conv-item{display:flex;align-items:center;padding:6px 8px;margin:2px 0;border-radius:4px;cursor:pointer;color:#aaa;background:#0a1628;font-size:12px;gap:4px}
 .conv-item:hover{background:#16213e}
 .conv-item.active{background:#e94560;color:#fff}
-.conv-item .del{opacity:0;margin-left:auto;color:#f88;background:none;border:none;cursor:pointer;font-size:14px}
-.conv-item:hover .del{opacity:1}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+/* History modal */
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100;justify-content:center;align-items:center}
+.modal-overlay.show{display:flex}
+.modal{background:#16213e;border:1px solid #0f3460;border-radius:12px;width:600px;max-height:80vh;display:flex;flex-direction:column}
+.modal .modal-header{padding:16px 20px;border-bottom:1px solid #0f3460;display:flex;justify-content:space-between;align-items:center}
+.modal .modal-header h3{color:#e94560;font-size:16px}
+.modal .modal-header button{background:none;border:none;color:#a0a0b0;font-size:20px;cursor:pointer}
+.modal .modal-body{flex:1;overflow-y:auto;padding:12px}
+.history-item{display:flex;align-items:center;padding:10px 12px;margin:4px 0;background:#0a1628;border-radius:6px;gap:10px}
+.history-item:hover{background:#1a2a4e}
+.history-item .info{flex:1;min-width:0}
+.history-item .title{font-size:14px;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.history-item .meta{font-size:11px;color:#888;margin-top:2px}
+.history-item button{padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px}
+.history-item .btn-load{background:#0f3460;color:#e0e0e0}
+.history-item .btn-load:hover{background:#1a4a80}
+.history-item .btn-dl{background:#1a3a1a;color:#8fbc8f}
+.history-item .btn-dl:hover{background:#2a5a2a}
+.history-item .btn-del{background:#3a1a1a;color:#e94560}
+.history-item .btn-del:hover{background:#5a2a2a}
 </style>
 </head>
 <body>
@@ -44,31 +62,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="sidebar">
   <h2>TinyMCP Chat</h2>
   <div style="display:flex;gap:4px;margin-bottom:8px">
-    <button onclick="newConversation()" style="flex:1;padding:6px;background:#e94560;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">+ New Chat</button>
+    <button onclick="newConversation()" style="flex:1;padding:6px;background:#e94560;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">+ New</button>
+    <button onclick="showHistory()" style="flex:1;padding:6px;background:#0f3460;color:#e0e0e0;border:1px solid #1a1a4e;border-radius:4px;cursor:pointer;font-size:12px" id="historyBtn">📋 History</button>
   </div>
   <div id="convList" style="max-height:180px;overflow-y:auto;margin-bottom:8px;font-size:12px"></div>
   <label>API Key</label>
-  <input type="password" id="apiKey" placeholder="sk-... or ollama (empty)">
+  <input type="password" id="apiKey" placeholder="local" value="local">
   <label>Base URL</label>
-  <input type="text" id="baseUrl" value="http://localhost:11434/v1" placeholder="http://localhost:11434/v1">
+  <input type="text" id="baseUrl" value="http://localhost:8080/v1" placeholder="http://localhost:8080/v1">
   <label>Model</label>
-  <input type="text" id="model" value="gpt-4o" list="modelList" placeholder="Type or select model...">
-  <datalist id="modelList">
-    <option value="gpt-4o">GPT-4o (OpenAI)</option>
-    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
-    <option value="gpt-4.1">GPT-4.1 (OpenAI)</option>
-    <option value="claude-opus-4-7">Claude Opus 4.7 (Anthropic)</option>
-    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Anthropic)</option>
-    <option value="claude-haiku-4-5">Claude Haiku 4.5 (Anthropic)</option>
-    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Anthropic)</option>
-    <option value="claude-3-opus-20240229">Claude 3 Opus (Anthropic)</option>
-    <option value="deepseek-v3">DeepSeek V3</option>
-    <option value="deepseek-r1">DeepSeek R1</option>
-    <option value="qwen2.5:7b">Qwen 2.5 7B (Ollama)</option>
-    <option value="qwen2.5:14b">Qwen 2.5 14B (Ollama)</option>
-    <option value="llama3:8b">Llama 3 8B (Ollama)</option>
-    <option value="llama3:70b">Llama 3 70B (Ollama)</option>
-  </datalist>
+  <input type="text" id="model" value="qwen2.5-1.5b" placeholder="qwen2.5-1.5b">
   <label>History Rounds</label>
   <select id="historyRounds">
     <option value="5">5 rounds</option>
@@ -83,7 +86,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="main">
   <div class="header">Chat</div>
   <div class="messages" id="messages">
-    <div class="msg assistant">Hello! I'm your AI assistant. I can use tools like file_read and file_list to help you. Try asking me to read a file!</div>
+    <div class="msg assistant">Hello! I'm your AI assistant with 12 tools. Try: "check if mcp_server is running" or "search for TODO in src/" or "what's the weather in Beijing"</div>
   </div>
   <div class="input-area">
     <textarea id="input" placeholder="Type a message..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
@@ -91,46 +94,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 
+<!-- History Modal -->
+<div class="modal-overlay" id="historyModal" onclick="if(event.target===this)closeHistory()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>📋 Conversation History</h3>
+      <button onclick="closeHistory()">&times;</button>
+    </div>
+    <div class="modal-body" id="historyBody">
+      <div style="text-align:center;color:#888;padding:20px">Loading...</div>
+    </div>
+  </div>
+</div>
+
 <script>
-// Load settings from localStorage
-['apiKey','baseUrl','model','historyRounds'].forEach(k=>{
+['apiKey','baseUrl','historyRounds'].forEach(k=>{
   const v=localStorage.getItem('chat_'+k);
   if(v) document.getElementById(k).value=v;
 });
-
-// Save settings on change
 ['apiKey','baseUrl','historyRounds'].forEach(k=>{
   document.getElementById(k).addEventListener('change',function(){
     localStorage.setItem('chat_'+k,this.value);
   });
 });
-// model uses input event (free-text, not select)
-document.getElementById('model').addEventListener('input',function(){
-  localStorage.setItem('chat_model',this.value);
-});
-
 let isStreaming = false;
 let conversationHistory = [];
 let availableTools = [];
 let activeConvId = localStorage.getItem('chat_active_conv') || '';
-let conversations = [];
 
-// ── 对话管理 ──
+// ── Conversations ──
 async function loadConversations() {
   try {
     const resp = await fetch('/api/conversations');
-    conversations = await resp.json();
-    renderConvList();
+    const list = await resp.json();
+    renderConvList(list);
   } catch(e) { setTimeout(loadConversations, 2000); }
 }
-function renderConvList() {
-  const container = document.getElementById('convList');
-  container.innerHTML = conversations.map(c =>
-    '<div class="conv-item' + (c.id === activeConvId ? ' active' : '') + '" ' +
-    'onclick="switchConversation(\'' + c.id + '\')">' +
+function renderConvList(list) {
+  const c = document.getElementById('convList');
+  if (!list.length) { c.innerHTML = '<div style="color:#666;font-size:11px;padding:4px">No conversations yet</div>'; return; }
+  c.innerHTML = list.slice(0,10).map(conv =>
+    '<div class="conv-item' + (conv.id === activeConvId ? ' active' : '') + '" ' +
+    'onclick="loadConversation(\'' + conv.id + '\')" title="' + conv.created_at + '">' +
     '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' +
-    c.title + '</span>' +
-    '<button class="del" onclick="event.stopPropagation();deleteConversation(\'' + c.id + '\')">x</button>' +
+    (conv.title || 'Untitled') + '</span>' +
+    '<span style="color:#666;font-size:10px">' + (conv.created_at || '') + '</span>' +
     '</div>'
   ).join('');
 }
@@ -138,61 +146,106 @@ async function newConversation() {
   const resp = await fetch('/api/conversations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({title: '新对话 ' + new Date().toLocaleTimeString()})
+    body: JSON.stringify({title: 'Chat ' + new Date().toLocaleTimeString()})
   });
-  const c = await resp.json();
-  activeConvId = c.id;
+  const conv = await resp.json();
+  activeConvId = conv.id;
   localStorage.setItem('chat_active_conv', activeConvId);
   conversationHistory = [];
   document.getElementById('messages').innerHTML = '';
-  addMessage('assistant', '新对话已创建，开始聊天吧！');
+  addMessage('assistant', 'New conversation started!');
   loadConversations();
 }
-async function switchConversation(id) {
+async function loadConversation(id) {
   activeConvId = id;
   localStorage.setItem('chat_active_conv', activeConvId);
-  document.getElementById('messages').innerHTML = '';
-  addMessage('assistant', '加载中...');
+  document.getElementById('messages').innerHTML = '<div class="msg assistant">Loading conversation...</div>';
   try {
-    const resp = await fetch('/api/conversations');
-    const list = await resp.json();
-    const conv = list.find(c => c.id === id);
-    // 从服务器加载历史 (GET /api/conversations 目前不含历史，用独立请求)
+    const resp = await fetch('/api/conversations/' + id + '/messages');
+    const messages = await resp.json();
     document.getElementById('messages').innerHTML = '';
-    addMessage('assistant', '已切换到: ' + (conv ? conv.title : id));
-  } catch(e) {}
-  // 清空历史，由后端管理
-  conversationHistory = [];
-  renderConvList();
+    if (!messages.length) {
+      addMessage('assistant', 'Empty conversation');
+    } else {
+      for (const m of messages) {
+        addMessage(m.role, m.content);
+      }
+      addMessage('tool', '--- Loaded ' + messages.length + ' messages ---');
+    }
+    // Rebuild conversationHistory for LLM context
+    conversationHistory = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+  } catch(e) {
+    document.getElementById('messages').innerHTML = '';
+    addMessage('error', 'Failed to load: ' + e.message);
+  }
+  loadConversations();
 }
 async function deleteConversation(id) {
-  if (!confirm('删除此对话及日志？')) return;
+  if (!confirm('Delete this conversation?')) return;
   await fetch('/api/conversations?id=' + id, {method: 'DELETE'});
   if (activeConvId === id) {
     activeConvId = '';
     localStorage.removeItem('chat_active_conv');
-    document.getElementById('messages').innerHTML = '';
-    addMessage('assistant', '对话已删除，请新建对话');
+    conversationHistory = [];
   }
   loadConversations();
+  // Refresh modal if open
+  if (document.getElementById('historyModal').classList.contains('show')) showHistory();
 }
-loadConversations();
+function downloadConversation(id) {
+  window.open('/api/conversations/' + id + '/export', '_blank');
+}
 
-// 加载插件列表
+// ── History Modal ──
+async function showHistory() {
+  document.getElementById('historyModal').classList.add('show');
+  document.getElementById('historyBody').innerHTML = '<div style="text-align:center;color:#888;padding:20px">Loading...</div>';
+  try {
+    const resp = await fetch('/api/conversations');
+    const list = await resp.json();
+    if (!list.length) {
+      document.getElementById('historyBody').innerHTML = '<div style="text-align:center;color:#888;padding:20px">No conversations yet. Start chatting!</div>';
+      return;
+    }
+    // Fetch message counts
+    const items = await Promise.all(list.map(async c => {
+      try {
+        const r = await fetch('/api/conversations/' + c.id + '/messages');
+        const msgs = await r.json();
+        return {...c, msgCount: msgs.length};
+      } catch(e) { return {...c, msgCount: 0}; }
+    }));
+    document.getElementById('historyBody').innerHTML = items.map(c =>
+      '<div class="history-item">' +
+        '<div class="info">' +
+          '<div class="title">' + (c.title || 'Untitled') + '</div>' +
+          '<div class="meta">' + (c.created_at || '') + ' · ' + c.msgCount + ' messages</div>' +
+        '</div>' +
+        '<button class="btn-load" onclick="loadConversation(\'' + c.id + '\');closeHistory()">Load</button>' +
+        '<button class="btn-dl" onclick="downloadConversation(\'' + c.id + '\')">⬇ Download</button>' +
+        '<button class="btn-del" onclick="deleteConversation(\'' + c.id + '\')">✕</button>' +
+      '</div>'
+    ).join('');
+  } catch(e) {
+    document.getElementById('historyBody').innerHTML = '<div style="color:#e94560;padding:20px">Error: ' + e.message + '</div>';
+  }
+}
+function closeHistory() {
+  document.getElementById('historyModal').classList.remove('show');
+}
+
+// ── Plugins ──
 async function loadPlugins() {
   try {
     const resp = await fetch('/api/tools');
     const data = await resp.json();
     availableTools = data.tools || [];
     renderPlugins();
-  } catch(e) {
-    setTimeout(loadPlugins, 2000);
-  }
+  } catch(e) { setTimeout(loadPlugins, 2000); }
 }
-
 function renderPlugins() {
   const container = document.getElementById('pluginList');
-  document.getElementById('pluginCount').textContent = '(' + availableTools.length + ' tools)';
+  document.getElementById('pluginCount').textContent = '(' + availableTools.length + ')';
   const disabled = JSON.parse(localStorage.getItem('chat_disabled_tools') || '[]');
   container.innerHTML = availableTools.map(t => {
     const isOff = disabled.includes(t.name);
@@ -204,16 +257,13 @@ function renderPlugins() {
 }
 function togglePlugin(name, enabled) {
   let disabled = JSON.parse(localStorage.getItem('chat_disabled_tools') || '[]');
-  if (enabled) {
-    disabled = disabled.filter(d => d !== name);
-  } else if (!disabled.includes(name)) {
-    disabled.push(name);
-  }
+  if (enabled) disabled = disabled.filter(d => d !== name);
+  else if (!disabled.includes(name)) disabled.push(name);
   localStorage.setItem('chat_disabled_tools', JSON.stringify(disabled));
   renderPlugins();
 }
-loadPlugins();
 
+// ── Chat ──
 function addMessage(role, text, id) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
@@ -223,44 +273,32 @@ function addMessage(role, text, id) {
   document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
   return div;
 }
-
 function clearChat() {
   document.getElementById('messages').innerHTML = '';
   conversationHistory = [];
   activeConvId = '';
   localStorage.removeItem('chat_active_conv');
-  addMessage('assistant', 'Chat cleared. Start a new conversation!');
+  addMessage('assistant', 'Chat cleared.');
   loadConversations();
 }
-
 async function send() {
   const input = document.getElementById('input');
   const msg = input.value.trim();
   if (!msg || isStreaming) return;
-
   const apiKey = document.getElementById('apiKey').value.trim();
-  if (!apiKey) {
-    addMessage('error', 'Please set your API Key in the sidebar');
-    return;
-  }
-
+  if (!apiKey) { addMessage('error', 'Please set API Key'); return; }
   input.value = '';
   isStreaming = true;
   document.getElementById('sendBtn').disabled = true;
-
   addMessage('user', msg);
   const assistantDiv = addMessage('assistant', '', 'streamingMsg');
   assistantDiv.classList.add('streaming');
-
-  const model = document.getElementById('model').value;
+  const model = document.getElementById('model').value || 'gpt-4o';
   const baseUrl = document.getElementById('baseUrl').value.trim();
   const maxHistory = parseInt(document.getElementById('historyRounds').value) * 2;
-
-  // 自动创建对话
   if (!activeConvId) {
     const r = await fetch('/api/conversations', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({title: msg.substring(0, 30)})
     });
     const c = await r.json();
@@ -268,102 +306,73 @@ async function send() {
     localStorage.setItem('chat_active_conv', activeConvId);
     loadConversations();
   }
-
-  // Trim history
   const history = conversationHistory.slice(-maxHistory);
-
   try {
     const resp = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
-        message: msg,
-        api_key: apiKey,
-        model: model,
-        base_url: baseUrl,
-        conversation_id: activeConvId,
-        history: history,
+        message: msg, api_key: apiKey, model: model, base_url: baseUrl,
+        conversation_id: activeConvId, history: history,
         disabled_tools: JSON.parse(localStorage.getItem('chat_disabled_tools') || '[]')
       })
     });
-
     if (!resp.ok) {
       assistantDiv.classList.remove('streaming');
-      assistantDiv.textContent = 'Error: ' + resp.status + ' ' + resp.statusText;
-      addMessage('error', 'HTTP ' + resp.status);
-      isStreaming = false;
-      document.getElementById('sendBtn').disabled = false;
+      assistantDiv.textContent = 'Error: ' + resp.status;
+      isStreaming = false; document.getElementById('sendBtn').disabled = false;
       return;
     }
-
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let fullText = '';
-
     while (true) {
       const {done, value} = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, {stream: true});
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
       let eventType = '';
       for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          handleSSE(eventType, data, assistantDiv);
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        else if (line.startsWith('data: ')) {
+          handleSSE(eventType, line.slice(6), assistantDiv);
           eventType = '';
         }
       }
     }
-
     assistantDiv.classList.remove('streaming');
-    if (fullText) {
+    if (assistantDiv.textContent) {
       conversationHistory.push({role: 'user', content: msg});
-      conversationHistory.push({role: 'assistant', content: fullText});
+      conversationHistory.push({role: 'assistant', content: assistantDiv.textContent});
     }
-  } catch (e) {
+  } catch(e) {
     assistantDiv.classList.remove('streaming');
-    assistantDiv.textContent = 'Connection error: ' + e.message;
-    addMessage('error', e.message);
+    assistantDiv.textContent = 'Error: ' + e.message;
   }
-
   isStreaming = false;
   document.getElementById('sendBtn').disabled = false;
 }
-
 function handleSSE(event, data, assistantDiv) {
-  switch (event) {
-    case 'delta':
-      assistantDiv.textContent += data;
-      break;
+  switch(event) {
+    case 'delta': assistantDiv.textContent += data; break;
     case 'tool_start':
-      try {
-        const t = JSON.parse(data);
-        addMessage('tool', '[TOOL] Calling: ' + t.tool);
-      } catch(e) {}
+      try { addMessage('tool', '[🔧] ' + JSON.parse(data).tool); } catch(e) {}
       break;
     case 'tool_result':
       try {
         const r = JSON.parse(data);
-        if (r.content && r.content[0]) {
-          addMessage('tool', '[RESULT] ' + r.content[0].text.substring(0, 200));
-        }
+        if (r.content && r.content[0]) addMessage('tool', '[✓] ' + r.content[0].text.substring(0, 300));
       } catch(e) {}
       break;
-    case 'done':
-      // final text is accumulated from deltas
-      break;
-    case 'error':
-      addMessage('error', data);
-      break;
+    case 'done': break;
+    case 'error': addMessage('error', data); break;
   }
   document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
 }
+
+// Init
+loadConversations();
+loadPlugins();
 </script>
 </body>
 </html>
