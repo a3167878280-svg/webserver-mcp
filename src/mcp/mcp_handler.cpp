@@ -53,6 +53,12 @@ void McpHandler::register_handlers() {
     m_routes["resources/read"] = [this](const nlohmann::json& p) {
         return handle_resources_read(p);
     };
+    m_routes["prompts/list"] = [this](const nlohmann::json& p) {
+        return handle_prompts_list(p);
+    };
+    m_routes["prompts/get"] = [this](const nlohmann::json& p) {
+        return handle_prompts_get(p);
+    };
     m_routes["notifications/initialized"] = [this](const nlohmann::json& p) {
         return handle_notifications_initialized(p);
     };
@@ -129,6 +135,7 @@ nlohmann::json McpHandler::handle_initialize(const nlohmann::json& params) {
     result.capabilities.tools.listChanged = false;
     result.capabilities.resources.subscribe = false;
     result.capabilities.resources.listChanged = false;
+    result.capabilities.prompts.listChanged = false;
 
     return result.to_json();
 }
@@ -243,6 +250,57 @@ nlohmann::json McpHandler::handle_resources_read(const nlohmann::json& params) {
     auto result = m_registry->read_resource(p.uri);
     if (!result.has_value()) {
         throw std::runtime_error("Unknown resource: " + p.uri);
+    }
+    return result->to_json();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Prompts 方法
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * prompts/list — 返回所有可用 Prompt 模板
+ *
+ * 回复示例:
+ *   {"prompts":[
+ *     {"name":"code_review","description":"审查代码质量","arguments":[...]},
+ *     {"name":"weather_advice","description":"天气+穿衣建议","arguments":[...]},
+ *     ...
+ *   ]}
+ */
+nlohmann::json McpHandler::handle_prompts_list(const nlohmann::json& /*params*/) {
+    nlohmann::json arr = nlohmann::json::array();
+    if (m_registry) {
+        auto all = m_registry->get_all_prompts();
+        for (auto& p : all) {
+            arr.push_back(p.to_json());
+        }
+    }
+    return {{"prompts", std::move(arr)}};
+}
+
+/**
+ * prompts/get — 获取某个 Prompt 的完整消息内容
+ *
+ * 客户端发送:
+ *   {"jsonrpc":"2.0","id":5,"method":"prompts/get",
+ *    "params":{"name":"code_review","arguments":{"language":"cpp"}}}
+ *
+ * 服务器回复:
+ *   {"description":"审查代码质量","messages":[
+ *     {"role":"user","content":{"type":"text","text":"请审查以下 C++ 代码..."}}
+ *   ]}
+ */
+nlohmann::json McpHandler::handle_prompts_get(const nlohmann::json& params) {
+    PromptGetParams p = PromptGetParams::from_json(params);
+
+    if (!m_registry) {
+        throw std::runtime_error("No plugin registry configured");
+    }
+
+    auto result = m_registry->get_prompt(p.name, p.arguments);
+    if (!result.has_value()) {
+        throw std::runtime_error("Unknown prompt: " + p.name);
     }
     return result->to_json();
 }

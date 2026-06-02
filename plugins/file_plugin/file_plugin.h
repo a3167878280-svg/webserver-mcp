@@ -29,6 +29,11 @@ public:
     std::vector<mcp::ResourceDef> get_resources() const override;
     mcp::ResourceReadResult read_resource(const std::string& uri) override;
 
+    // ── Prompt 接口 ──
+    std::vector<mcp::PromptDef> get_prompts() const override;
+    mcp::PromptGetResult get_prompt(const std::string& name,
+                                     const nlohmann::json& arguments) override;
+
 private:
     mcp::ToolCallResult handle_file_read(const nlohmann::json& args);
     mcp::ToolCallResult handle_file_list(const nlohmann::json& args);

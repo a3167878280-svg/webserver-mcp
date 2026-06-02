@@ -13,6 +13,10 @@ public:
         const std::string& tool_name,
         const nlohmann::json& arguments) override;
 
+    std::vector<mcp::PromptDef> get_prompts() const override;
+    mcp::PromptGetResult get_prompt(const std::string& name,
+                                     const nlohmann::json& arguments) override;
+
 private:
     mcp::ToolCallResult handle_code_review(const nlohmann::json& args);
     mcp::ToolCallResult handle_code_stats(const nlohmann::json& args);

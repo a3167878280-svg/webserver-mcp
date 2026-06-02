@@ -178,6 +178,74 @@ mcp::ResourceReadResult FilePlugin::read_file_resource(
     return result;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Prompt 接口 — 预定义对话模板
+// ═══════════════════════════════════════════════════════════════
+
+std::vector<mcp::PromptDef> FilePlugin::get_prompts() const {
+    mcp::PromptDef prompt;
+    prompt.name = "file_analyzer";
+    prompt.description = "分析指定文件的内容并给出摘要和关键信息";
+    prompt.arguments = {
+        {"file_path", "要分析的文件的绝对路径", true},
+        {"focus", "关注的方面: content(内容)/structure(结构)/summary(摘要)，默认 summary", false}
+    };
+    return {prompt};
+}
+
+mcp::PromptGetResult FilePlugin::get_prompt(
+    const std::string& name, const nlohmann::json& arguments) {
+
+    mcp::PromptGetResult result;
+
+    if (name == "file_analyzer") {
+        std::string file_path = arguments.value("file_path", "");
+        std::string focus = arguments.value("focus", "summary");
+
+        result.description = "分析文件 " + file_path + " (关注: " + focus + ")";
+
+        // 尝试读取文件内容，嵌入到 prompt 中
+        std::string file_content;
+        try {
+            std::ifstream f(file_path);
+            if (f.is_open()) {
+                std::ostringstream oss;
+                oss << f.rdbuf();
+                file_content = oss.str();
+            }
+        } catch (...) {}
+
+        // 构建引导 LLM 的预设消息
+        mcp::PromptMessage msg;
+        msg.role = "user";
+
+        std::string text = "请分析以下文件内容";
+        if (focus == "structure") {
+            text += "，重点关注其结构和组织方式";
+        } else if (focus == "content") {
+            text += "，深入解读其内容含义";
+        } else {
+            text += "，给出简洁的摘要";
+        }
+        text += ":\n\n文件路径: " + file_path;
+
+        if (!file_content.empty()) {
+            // 限制嵌入内容长度，避免超出 LLM 上下文
+            if (file_content.size() > 8000) {
+                file_content = file_content.substr(0, 8000) + "\n...(内容已截断)";
+            }
+            text += "\n\n```\n" + file_content + "\n```";
+        } else {
+            text += "\n\n(文件无法读取，请用 file_read 工具先读取)";
+        }
+
+        msg.content.text = text;
+        result.messages.push_back(msg);
+    }
+
+    return result;
+}
+
 // dlopen 入口
 extern "C" plugin::IPlugin* create_plugin() {
     return new FilePlugin();

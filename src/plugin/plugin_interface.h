@@ -90,6 +90,35 @@ public:
     virtual mcp::ResourceReadResult read_resource(const std::string& uri) {
         return {};
     }
+
+    /**
+     * 返回本插件提供的 Prompt 模板列表 (可选)
+     *
+     * 和 Tools/Resources 不同，Prompts 是"对话模板":
+     *   - Tools: LLM 主动调函数
+     *   - Resources: 客户端浏览数据
+     *   - Prompts: 用户选择模板 → 填入参数 → 生成预设对话
+     *
+     * 默认返回空 — 只有提供 Prompt 的插件才需要重写
+     */
+    virtual std::vector<mcp::PromptDef> get_prompts() const {
+        return {};
+    }
+
+    /**
+     * 获取 Prompt 的完整内容
+     *
+     * @param name       Prompt 名称
+     * @param arguments  用户填入的参数 (如 {language:"cpp"})
+     * @return           PromptGetResult (description + messages 数组)
+     *
+     * 默认返回空 — 和 get_prompts() 配套重写
+     */
+    virtual mcp::PromptGetResult get_prompt(
+        const std::string& name,
+        const nlohmann::json& arguments) {
+        return {};
+    }
 };
 
 } // namespace plugin

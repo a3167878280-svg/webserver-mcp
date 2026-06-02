@@ -222,5 +222,92 @@ mcp::ToolCallResult ReviewPlugin::handle_code_stats(const nlohmann::json& args) 
     return make_result(out.str());
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Prompt 接口
+// ═══════════════════════════════════════════════════════════════
+
+std::vector<mcp::PromptDef> ReviewPlugin::get_prompts() const {
+    mcp::PromptDef p1;
+    p1.name = "code_review";
+    p1.description = "按专业标准审查代码，检查 bug、安全漏洞、性能问题和风格";
+    p1.arguments = {
+        {"file_path", "要审查的代码文件路径", true},
+        {"language", "编程语言 (cpp/python/java/go等，可选自动检测)", false},
+        {"focus", "审查重点: all/security/performance/style，默认 all", false}
+    };
+
+    mcp::PromptDef p2;
+    p2.name = "code_explain";
+    p2.description = "逐行解释代码逻辑，适合学习或 code review 前理解代码";
+    p2.arguments = {
+        {"file_path", "要解释的代码文件路径", true},
+        {"level", "详细程度: simple(简单)/detailed(详细)，默认 detailed", false}
+    };
+
+    return {p1, p2};
+}
+
+mcp::PromptGetResult ReviewPlugin::get_prompt(
+    const std::string& name, const nlohmann::json& arguments) {
+
+    mcp::PromptGetResult result;
+
+    if (name == "code_review") {
+        std::string file_path = arguments.value("file_path", "");
+        std::string language = arguments.value("language", "auto");
+        std::string focus = arguments.value("focus", "all");
+
+        result.description = "审查代码: " + file_path;
+
+        mcp::PromptMessage msg;
+        msg.role = "user";
+
+        std::string text = "你是一位资深代码审查专家。请审查以下代码";
+        if (!language.empty() && language != "auto")
+            text += "（语言: " + language + "）";
+
+        text += "。\n\n审查要求:\n";
+        if (focus == "all" || focus == "security") {
+            text += "1. **安全检查**: 硬编码密码/密钥、SQL注入、XSS、缓冲区溢出、权限问题\n";
+        }
+        if (focus == "all" || focus == "performance") {
+            text += "2. **性能分析**: 不必要的拷贝、低效算法、内存泄漏风险、IO 瓶颈\n";
+        }
+        if (focus == "all" || focus == "style") {
+            text += "3. **代码风格**: 命名规范、注释质量、函数长度、圈复杂度\n";
+        }
+        text += "4. **逻辑错误**: 边界条件、空指针、类型转换、并发问题\n";
+        text += "\n请给出: 问题列表(含行号) + 严重程度 + 修复建议\n";
+        text += "文件: " + file_path + "\n";
+        text += "请用 file_read 工具读取该文件后进行审查。";
+
+        msg.content.text = text;
+        result.messages.push_back(msg);
+
+    } else if (name == "code_explain") {
+        std::string file_path = arguments.value("file_path", "");
+        std::string level = arguments.value("level", "detailed");
+
+        result.description = "解释代码: " + file_path;
+
+        mcp::PromptMessage msg;
+        msg.role = "user";
+
+        std::string text = "请";
+        if (level == "simple") {
+            text += "用简单的语言概括这段代码的功能和主要逻辑:\n";
+        } else {
+            text += "逐行详细解释这段代码，包括每个函数的作用、关键变量的含义、数据流向:\n";
+        }
+        text += "文件: " + file_path + "\n";
+        text += "请用 file_read 工具读取该文件后进行解释。";
+
+        msg.content.text = text;
+        result.messages.push_back(msg);
+    }
+
+    return result;
+}
+
 extern "C" plugin::IPlugin* create_plugin() { return new ReviewPlugin(); }
 extern "C" void destroy_plugin(plugin::IPlugin* p) { delete p; }

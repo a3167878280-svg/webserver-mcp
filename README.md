@@ -1,6 +1,6 @@
 # TinyMCP — C++ MCP 协议服务器
 
-基于 C++17 的 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，支持 **Tools** 和 **Resources** 两大能力，通过插件化架构和双传输模式为 AI 客户端提供标准化工具调用。
+基于 C++17 的 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，**完整实现 MCP 三大能力 (Tools + Resources + Prompts)**，通过插件化架构和双传输模式为 AI 客户端提供标准化工具调用和对话模板。
 
 ## 项目结构
 
@@ -32,12 +32,12 @@
 │   ├── log/                        异步日志
 │   ├── lock/                       同步原语 (mutex/sem/cond)
 │   └── threadpool/                 泛型线程池
-├── plugins/                        5 个插件 (编译为 .so)
-│   ├── file_plugin/               file_read, file_list + config://server 资源
+├── plugins/                        5 个插件 (编译为 .so, 均支持 Tools + Resources + Prompts)
+│   ├── file_plugin/               file_read, file_list + config://server 资源 + file_analyzer prompt
 │   ├── weather_plugin/            query_weather (wttr.in)
 │   ├── bilibili_plugin/           B站 UP主视频/信息/热门
 │   ├── command_plugin/            shell_exec, shell_exec_bg
-│   └── review_plugin/             code_review, code_stats
+│   └── review_plugin/             code_review, code_stats + code_review/code_explain prompts
 ├── chat/
 │   └── chat.html                  单页聊天界面
 ├── third_party/
@@ -57,6 +57,8 @@
 | `tools/call` | 执行工具 | 按名称分发到插件执行 |
 | `resources/list` | 资源列表 | 返回所有可用资源 URI |
 | `resources/read` | 读取资源 | 按 URI 读取资源内容 |
+| `prompts/list` | 提示列表 | 3 个 Prompt 模板，来自 2 个插件 |
+| `prompts/get` | 获取提示 | 按名称获取 Prompt 的完整消息内容 |
 | `notifications/initialized` | 初始化完成 | 通知，无响应 |
 
 ## 传输模式
@@ -88,9 +90,48 @@ printf 'Content-Length: %d\r\n\r\n%s' ${#BODY} "$BODY" | ./mcp_server
 | `/chat.html` | GET | 聊天界面 |
 | `/health` | GET | 健康检查 |
 
+## Prompts（提示模板）
+
+Prompts 是 MCP 的第三大能力 — 预定义对话模板，用户选择后系统自动构建高质量的 LLM 对话指令。
+
+### 可用的 Prompt
+
+| Prompt | 来源 | 功能 | 参数 |
+|--------|------|------|------|
+| `code_review` | ReviewPlugin | 专业代码审查，检查安全/性能/风格 | file_path, language, focus |
+| `code_explain` | ReviewPlugin | 逐行解释代码逻辑 | file_path, level |
+| `file_analyzer` | FilePlugin | 分析文件内容并给出摘要 | file_path, focus |
+
+### Tool vs Resource vs Prompt
+
+```
+同一个代码审查场景，三种能力各司其职:
+
+  Tool (code_review):
+    LLM: "我要审查 /tmp/test.cpp"
+    → 调 code_review(file_path="/tmp/test.cpp")
+    → 执行静态分析 → 返回结果
+    ✅ LLM 主动发起，自动化
+    ❌ 依赖 LLM 知道工具名
+
+  Resource (config://server):
+    服务器: "我有这些数据可读: [config://server, ...]"
+    → 客户端浏览 → 点 config → 读
+    ✅ 被动暴露，浏览发现
+    ❌ 只看不分析
+
+  Prompt (code_review):
+    用户点"代码审查助手"
+    → 系统自动构建专业审查指令
+    → LLM 收到: "你是代码审查专家。请检查: 安全/性能/风格..."
+    → LLM 可能还会自己调用 code_review 工具来执行分析
+    ✅ 用户一键触发，指令质量稳定
+    ✅ LLM 可以在 Prompt 引导下自行决定用哪些工具
+```
+
 ## 插件开发
 
-插件是独立编译的 `.so` 文件，实现 `IPlugin` 接口即可：
+插件是独立编译的 `.so` 文件，实现 `IPlugin` 接口即可。一个插件可以同时提供 Tools、Resources 和 Prompts：
 
 ```cpp
 class MyPlugin : public plugin::IPlugin {
@@ -104,6 +145,10 @@ class MyPlugin : public plugin::IPlugin {
     // 资源 (可选)
     vector<mcp::ResourceDef> get_resources() const override { /* ... */ }
     ResourceReadResult read_resource(uri) override { /* ... */ }
+
+    // Prompt 模板 (可选)
+    vector<mcp::PromptDef> get_prompts() const override { /* ... */ }
+    PromptGetResult get_prompt(name, args) override { /* ... */ }
 };
 
 extern "C" plugin::IPlugin* create_plugin() { return new MyPlugin(); }
@@ -216,4 +261,4 @@ ToolOrchestrator (Agent 循环, 最多 10 轮)
 | V4 | LLM 代理 (OpenAI API) + 聊天前端 |
 | V5 | 4 个新插件, Anthropic API, 插件面板, 工具编排 |
 | V6 | 多对话管理, 清理死代码, 代码注释 |
-| **V7** | **Resources 支持 (resources/list + resources/read), 项目重命名, 完善文档** |
+| **V7** | **Resources + Prompts 支持, 9 个 MCP 方法, 3 个 Prompt 模板, 项目重命名, 完善文档** |

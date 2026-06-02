@@ -36,11 +36,17 @@ public:
     std::vector<mcp::ResourceDef> get_all_resources() const;
     std::optional<mcp::ResourceReadResult> read_resource(const std::string& uri);
 
+    // ── Prompt 操作 ──
+    std::vector<mcp::PromptDef> get_all_prompts() const;
+    std::optional<mcp::PromptGetResult> get_prompt(
+        const std::string& name, const nlohmann::json& arguments);
+
     size_t size() const { return m_tools.size(); }
 
 private:
     std::unordered_map<std::string, PluginEntry> m_tools;
     std::unordered_map<std::string, std::pair<IPlugin*, mcp::ResourceDef>> m_resources;
+    std::unordered_map<std::string, std::pair<IPlugin*, mcp::PromptDef>> m_prompts;
 };
 
 } // namespace plugin

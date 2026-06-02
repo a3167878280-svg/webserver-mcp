@@ -52,6 +52,18 @@ void PluginRegistry::register_plugin(IPlugin* plugin) {
         LOG_INFO("Registered resource: %s (from %s)", res.uri.c_str(), plugin->name());
         m_resources[res.uri] = {plugin, res};
     }
+
+    // ── 注册 Prompts ──
+    auto prompts = plugin->get_prompts();
+    for (auto& prompt : prompts) {
+        if (m_prompts.find(prompt.name) != m_prompts.end()) {
+            LOG_WARN("Prompt name collision: '%s' already registered, skipping",
+                     prompt.name.c_str());
+            continue;
+        }
+        LOG_INFO("Registered prompt: %s (from %s)", prompt.name.c_str(), plugin->name());
+        m_prompts[prompt.name] = {plugin, prompt};
+    }
 }
 
 void PluginRegistry::unregister_plugin(IPlugin* plugin) {
@@ -70,6 +82,14 @@ void PluginRegistry::unregister_plugin(IPlugin* plugin) {
             rit = m_resources.erase(rit);
         else
             ++rit;
+    }
+    // 清理 Prompts
+    auto pit = m_prompts.begin();
+    while (pit != m_prompts.end()) {
+        if (pit->second.first == plugin)
+            pit = m_prompts.erase(pit);
+        else
+            ++pit;
     }
 }
 
@@ -108,6 +128,26 @@ std::optional<mcp::ResourceReadResult> PluginRegistry::read_resource(const std::
         return std::nullopt;  // 资源不存在
     }
     return it->second.first->read_resource(uri);
+}
+
+// ── Prompt 操作 ──
+
+std::vector<mcp::PromptDef> PluginRegistry::get_all_prompts() const {
+    std::vector<mcp::PromptDef> prompts;
+    prompts.reserve(m_prompts.size());
+    for (const auto& kv : m_prompts) {
+        prompts.push_back(kv.second.second);
+    }
+    return prompts;
+}
+
+std::optional<mcp::PromptGetResult> PluginRegistry::get_prompt(
+    const std::string& name, const nlohmann::json& arguments) {
+    auto it = m_prompts.find(name);
+    if (it == m_prompts.end()) {
+        return std::nullopt;  // Prompt 不存在
+    }
+    return it->second.first->get_prompt(name, arguments);
 }
 
 } // namespace plugin

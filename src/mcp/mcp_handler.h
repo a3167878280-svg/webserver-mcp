@@ -32,6 +32,8 @@ private:
     nlohmann::json handle_tools_call(const nlohmann::json& params);
     nlohmann::json handle_resources_list(const nlohmann::json& params);
     nlohmann::json handle_resources_read(const nlohmann::json& params);
+    nlohmann::json handle_prompts_list(const nlohmann::json& params);
+    nlohmann::json handle_prompts_get(const nlohmann::json& params);
     nlohmann::json handle_notifications_initialized(const nlohmann::json& params);
 };
 
