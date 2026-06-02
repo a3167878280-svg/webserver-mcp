@@ -27,6 +27,7 @@
 #include "../log/log.h"
 #include "../common.h"
 #include <filesystem>
+#include <vector>
 
 namespace plugin {
 
@@ -45,12 +46,30 @@ PluginManager::~PluginManager() {
 int PluginManager::load_all(const std::string& plugin_dir) {
     int count = 0;
 
-    if (!fs::exists(plugin_dir) || !fs::is_directory(plugin_dir)) {
+    // 依次尝试多个路径 (方便从 project root 或 build/ 目录运行)
+    std::vector<std::string> candidates = {plugin_dir};
+    if (plugin_dir.find('/') == std::string::npos || plugin_dir == "./plugins") {
+        candidates.push_back("../" + plugin_dir);           // 比如 ../plugins
+        candidates.push_back("../build/plugins");           // 从项目根运行时的默认位置
+        candidates.push_back("./build/" + plugin_dir);      // 从项目根 ./build/plugins
+    }
+
+    std::string found_dir;
+    for (auto& d : candidates) {
+        if (fs::exists(d) && fs::is_directory(d)) {
+            found_dir = d;
+            break;
+        }
+    }
+
+    if (found_dir.empty()) {
         LOG_WARN("Plugin directory not found: %s", plugin_dir.c_str());
         return 0;
     }
 
-    for (const auto& entry : fs::directory_iterator(plugin_dir)) {
+    LOG_INFO("Loading plugins from: %s", found_dir.c_str());
+
+    for (const auto& entry : fs::directory_iterator(found_dir)) {
         if (!entry.is_regular_file()) continue;
 
         std::string path = entry.path().string();

@@ -37,6 +37,7 @@ public:
 private:
     mcp::ToolCallResult handle_file_read(const nlohmann::json& args);
     mcp::ToolCallResult handle_file_list(const nlohmann::json& args);
+    mcp::ToolCallResult handle_grep_file(const nlohmann::json& args);
 
     // 资源读取的辅助函数
     mcp::ResourceReadResult read_file_resource(const std::string& path,

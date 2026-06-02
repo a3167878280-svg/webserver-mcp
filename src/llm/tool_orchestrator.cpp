@@ -69,8 +69,35 @@ void ToolOrchestrator::process(
     OrchestratorCallback callback) {
 
     // ── 步骤 1: 构建初始 messages ──
-    // 把历史记录 + 用户新消息拼成 LLM 认识的 messages 数组
     std::vector<Message> messages = history;
+
+    // 注入 system prompt — 引导 LLM 如何高效使用工具
+    bool has_system = !history.empty() && history[0].role == "system";
+    if (!has_system) {
+        Message sys;
+        sys.role = "system";
+        sys.content =
+            "你是一个运行在 Linux 服务器上的 AI 助手，拥有执行命令、读写文件、审查代码等能力。\n\n"
+            "## 核心规则 (必须遵守):\n"
+            "1. **先探索再操作**: 不确定文件路径时先用 file_list，不确定进程是否运行时先用 shell_exec\n"
+            "2. **每个工具调用都要有目的**: 调用工具前在心里明确\"我要通过这个工具得到什么信息\"\n"
+            "3. **拿到结果后必须总结**: 工具返回数据后，用自然语言告诉用户结果，不要只展示原始输出\n"
+            "4. **多步骤任务要逐步执行**: 先 ls 找到文件 → 再 cat 读取 → 最后分析，不要一步到位猜测\n"
+            "5. **回答要直接明确**: 用户问\"有没有运行\"→ 回答\"正在运行\"或\"没有运行\"，不要模棱两可\n"
+            "6. **大文件用 grep 搜索**: 文件超过 100 行时，用 grep 定位关键内容，不要整篇通读\n"
+            "7. **用中文回复**: 除非用户要求，否则始终用中文回答\n\n"
+            "## 可用能力:\n"
+            "- 读写文件 (file_read, file_list)\n"
+            "- 执行命令 (shell_exec, shell_exec_bg)\n"
+            "- 搜索文件内容 (grep_file)\n"
+            "- 检查进程 (process_check)\n"
+            "- 查询天气 (query_weather)\n"
+            "- 代码审查 (code_review, code_stats)\n"
+            "- B站信息 (bilibili_*)";
+        messages.insert(messages.begin(), sys);
+    }
+
+    // 把历史记录 + 用户新消息拼成 LLM 认识的 messages 数组
     Message user_msg;
     user_msg.role = "user";
     user_msg.content = user_message;
@@ -186,15 +213,29 @@ void ToolOrchestrator::process(
                 };
 
                 std::string tool_result_text;
+                std::string frontend_text;
                 auto resp = m_handler.handle(req);
                 if (resp.has_value()) {
-                    tool_result_text = resp->result.dump();
+                    nlohmann::json& res = resp->result;
+                    // 提取纯文本给 LLM (去掉 JSON 包装)
+                    if (res.contains("content") && res["content"].is_array() &&
+                        !res["content"].empty() && res["content"][0].contains("text")) {
+                        tool_result_text = res["content"][0]["text"].get<std::string>();
+                    } else {
+                        tool_result_text = res.dump();
+                    }
+                    if (res.value("isError", false)) {
+                        tool_result_text = "[工具执行出错] " + tool_result_text;
+                    }
+                    // 引导 LLM 总结
+                    tool_result_text += "\n\n---\n请基于以上数据给用户一个明确、直接的中文回答。不要只重复原始数据，要给出结论。";
+                    frontend_text = res.dump();
                 } else {
-                    tool_result_text = "{\"isError\":true,\"content\":[{\"text\":\"Tool execution failed\"}]}";
+                    tool_result_text = "工具执行失败，请告知用户此工具暂时不可用。";
+                    frontend_text = "{}";
                 }
 
-                // 通知浏览器: "工具执行完了"
-                callback("tool_result", tool_result_text);
+                callback("tool_result", frontend_text);
 
                 // 把工具结果追加到 messages (下一轮 LLM 会看到)
                 Message tool_msg;

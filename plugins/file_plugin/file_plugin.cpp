@@ -3,6 +3,7 @@
 #include <sstream>
 #include <filesystem>
 #include <iostream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -56,9 +57,33 @@ std::vector<mcp::ToolDef> FilePlugin::get_tools() const {
         {"required", {"directory"}}
     };
 
+    nlohmann::json grep_schema = {
+        {"type", "object"},
+        {"properties", {
+            {"path", {
+                {"type", "string"},
+                {"description", "Absolute path to the file to search in"}
+            }},
+            {"pattern", {
+                {"type", "string"},
+                {"description", "Search pattern (supports basic regex like 'error|warn')"}
+            }},
+            {"context_lines", {
+                {"type", "integer"},
+                {"description", "Number of context lines to show around each match (default 2)"}
+            }},
+            {"max_matches", {
+                {"type", "integer"},
+                {"description", "Maximum matches to return (default 20, to avoid huge output)"}
+            }}
+        }},
+        {"required", {"path", "pattern"}}
+    };
+
     return {
-        make_tool("file_read", "Read the contents of a file", read_schema),
-        make_tool("file_list", "List files and directories at a given path", list_schema)
+        make_tool("file_read", "Read the contents of a file. For large files, consider using grep_file first to locate relevant sections.", read_schema),
+        make_tool("file_list", "List files and directories at a given path", list_schema),
+        make_tool("grep_file", "Search for a pattern in a file and return matching lines with context. Useful for finding specific content in large files without reading the entire file.", grep_schema)
     };
 }
 
@@ -68,6 +93,8 @@ mcp::ToolCallResult FilePlugin::call_tool(const std::string& tool_name,
         return handle_file_read(args);
     } else if (tool_name == "file_list") {
         return handle_file_list(args);
+    } else if (tool_name == "grep_file") {
+        return handle_grep_file(args);
     }
     return make_error("Unknown tool: " + tool_name);
 }
@@ -116,6 +143,101 @@ mcp::ToolCallResult FilePlugin::handle_file_list(const nlohmann::json& args) {
         return make_result(oss.str());
     } catch (const std::exception& e) {
         return make_error(std::string("Error listing directory: ") + e.what());
+    }
+}
+
+/**
+ * grep_file — 在文件中搜索匹配行并返回上下文
+ *
+ * 这个工具解决了"读了大文件不会分析"的问题:
+ *   1. 先用 grep_file 定位关键位置
+ *   2. 再用 file_read 或上下文分析具体内容
+ */
+mcp::ToolCallResult FilePlugin::handle_grep_file(const nlohmann::json& args) {
+    std::string path = args.value("path", "");
+    std::string pattern = args.value("pattern", "");
+    int context_lines = args.value("context_lines", 2);
+    int max_matches = args.value("max_matches", 20);
+
+    if (path.empty()) return make_error("Missing required parameter: path");
+    if (pattern.empty()) return make_error("Missing required parameter: pattern");
+    if (context_lines < 0) context_lines = 0;
+    if (context_lines > 10) context_lines = 10;
+    if (max_matches < 1) max_matches = 1;
+    if (max_matches > 100) max_matches = 100;
+
+    try {
+        std::ifstream f(path);
+        if (!f.is_open()) return make_error("Cannot open file: " + path);
+
+        // 读取所有行
+        std::vector<std::string> lines;
+        std::string line;
+        while (std::getline(f, line)) {
+            lines.push_back(line);
+        }
+
+        // 搜索匹配 (简单子串匹配，支持 | 分隔的多模式)
+        std::vector<std::string> patterns;
+        std::istringstream ps(pattern);
+        std::string p;
+        while (std::getline(ps, p, '|')) {
+            // trim
+            p.erase(0, p.find_first_not_of(" \t"));
+            p.erase(p.find_last_not_of(" \t") + 1);
+            if (!p.empty()) patterns.push_back(p);
+        }
+        if (patterns.empty()) patterns.push_back(pattern);
+
+        struct Match {
+            int line_num;
+            std::string matched_pattern;
+        };
+        std::vector<Match> matches;
+        for (size_t i = 0; i < lines.size() && (int)matches.size() < max_matches; i++) {
+            for (auto& pat : patterns) {
+                if (lines[i].find(pat) != std::string::npos) {
+                    matches.push_back({(int)i, pat});
+                    break;
+                }
+            }
+        }
+
+        if (matches.empty()) {
+            return make_result("No matches found for pattern '" + pattern + "' in " + path);
+        }
+
+        // 生成上下文输出
+        std::ostringstream oss;
+        int total_lines = (int)lines.size();
+        oss << "Found " << matches.size() << " match(es) for '" << pattern
+            << "' in " << path << " (" << total_lines << " lines total):\n\n";
+
+        int last_end = -1;
+        for (size_t mi = 0; mi < matches.size(); mi++) {
+            auto& m = matches[mi];
+            int start = std::max(0, m.line_num - context_lines);
+            int end = std::min(total_lines - 1, m.line_num + context_lines);
+
+            // 如果和上一个匹配的上下文重叠，跳过重叠部分
+            if (start <= last_end && mi > 0) {
+                start = last_end + 1;
+            }
+            if (start > end) continue;
+
+            oss << "--- Match " << (mi + 1) << " (line " << (m.line_num + 1)
+                << ", matched: " << m.matched_pattern << ") ---\n";
+
+            for (int i = start; i <= end; i++) {
+                std::string prefix = (i == m.line_num) ? ">>> " : "    ";
+                oss << prefix << std::setw(4) << (i + 1) << "| " << lines[i] << "\n";
+            }
+            last_end = end;
+        }
+
+        return make_result(oss.str());
+    } catch (const std::exception& e) {
+        return make_error(std::string("grep_file error: ") + e.what());
     }
 }
 

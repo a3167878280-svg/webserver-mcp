@@ -2,16 +2,34 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <iostream>
+#include <filesystem>
+#include <vector>
 
 AppConfig AppConfig::load_from_file(const std::string& path) {
     AppConfig cfg;
-    try {
-        std::ifstream f(path);
-        if (!f.is_open()) {
-            std::cerr << "Cannot open config file: " << path
-                      << ", using defaults." << std::endl;
-            return load_default();
+
+    // 依次尝试: 当前目录 → 父目录 (方便从 build/ 目录直接运行)
+    std::vector<std::string> candidates = {path, "config.json"};
+    if (path.find('/') == std::string::npos) {
+        candidates.push_back("../" + path);
+    }
+
+    std::string found_path;
+    for (auto& p : candidates) {
+        if (std::filesystem::exists(p)) {
+            found_path = p;
+            break;
         }
+    }
+
+    if (found_path.empty()) {
+        std::cerr << "Cannot open config file: " << path
+                  << ", using defaults." << std::endl;
+        return load_default();
+    }
+
+    try {
+        std::ifstream f(found_path);
         nlohmann::json j = nlohmann::json::parse(f);
         cfg.mode                = j.value("mode", cfg.mode);
         cfg.port                = j.value("port", cfg.port);

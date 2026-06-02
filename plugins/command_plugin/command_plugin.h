@@ -13,4 +13,5 @@ public:
 private:
     mcp::ToolCallResult handle_shell_exec(const nlohmann::json& args);
     mcp::ToolCallResult handle_shell_exec_bg(const nlohmann::json& args);
+    mcp::ToolCallResult handle_process_check(const nlohmann::json& args);
 };

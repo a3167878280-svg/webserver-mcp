@@ -80,7 +80,18 @@ std::vector<mcp::ToolDef> CommandPlugin::get_tools() const {
         {"required", {"command"}}
     };
 
-    return {t1, t2};
+    mcp::ToolDef t3;
+    t3.name = "process_check";
+    t3.description = "检查指定进程是否正在运行。可以用进程名(如 'python3')或PID(如 '12345')查询。返回进程ID、CPU和内存使用情况。";
+    t3.inputSchema = {
+        {"type", "object"},
+        {"properties", {
+            {"target", {{"type", "string"}, {"description", "进程名 (如 'python3', 'mcp_server') 或 PID (如 '12345')"}}}
+        }},
+        {"required", {"target"}}
+    };
+
+    return {t1, t2, t3};
 }
 
 mcp::ToolCallResult CommandPlugin::call_tool(
@@ -88,6 +99,7 @@ mcp::ToolCallResult CommandPlugin::call_tool(
 
     if (tool_name == "shell_exec") return handle_shell_exec(args);
     if (tool_name == "shell_exec_bg") return handle_shell_exec_bg(args);
+    if (tool_name == "process_check") return handle_process_check(args);
 
     mcp::ToolCallResult r;
     r.isError = true;
@@ -181,6 +193,65 @@ mcp::ToolCallResult CommandPlugin::handle_shell_exec_bg(const nlohmann::json& ar
     r.content.push_back({"text", "Background process started:\n" + output +
                          "\nLog file: " + log_file +
                          "\nCheck progress: shell_exec cat " + log_file});
+    return r;
+}
+
+/**
+ * process_check — 检查进程是否在运行
+ *
+ * 这个工具直接回答了用户"有没有运行"的问题:
+ *   - 用进程名查: ps aux | grep name
+ *   - 用PID查:    ps -p PID
+ *   返回清晰的运行状态 + CPU/内存信息
+ */
+mcp::ToolCallResult CommandPlugin::handle_process_check(const nlohmann::json& args) {
+    std::string target = args.value("target", "");
+    if (target.empty()) {
+        mcp::ToolCallResult r;
+        r.isError = true;
+        r.content.push_back({"text", "target is required (process name or PID)"});
+        return r;
+    }
+
+    std::string cmd;
+    // 判断是 PID (纯数字) 还是进程名
+    bool is_pid = !target.empty() && std::all_of(target.begin(), target.end(), ::isdigit);
+
+    if (is_pid) {
+        cmd = "ps -p " + target + " -o pid,pcpu,pmem,etime,args --no-headers 2>&1";
+    } else {
+        // 用 pgrep 精确匹配进程名，然后用 ps 获取详细信息
+        cmd = "PIDS=$(pgrep -x '" + target + "' 2>/dev/null); "
+              "if [ -z \"$PIDS\" ]; then "
+              "  echo 'NOT_RUNNING'; "
+              "else "
+              "  echo \"RUNNING ($(echo \"$PIDS\" | wc -l) process(es))\"; "
+              "  echo \"---\"; "
+              "  ps -p $(echo $PIDS | tr '\\n' ',') -o pid,pcpu,pmem,etime,args --no-headers 2>&1; "
+              "fi";
+    }
+
+    auto [output, exit_code] = run_cmd(cmd, 10);
+
+    mcp::ToolCallResult r;
+    r.isError = false;
+
+    std::string result;
+    if (output.find("NOT_RUNNING") != std::string::npos) {
+        result = "进程 '" + target + "' 当前**没有运行**。";
+    } else if (output.find("RUNNING") != std::string::npos) {
+        result = output;
+    } else if (is_pid) {
+        if (output.empty()) {
+            result = "PID " + target + " 对应的进程不存在或已退出。";
+        } else {
+            result = "PID " + target + " 正在运行:\n" + output;
+        }
+    } else {
+        result = output.empty() ? "进程 '" + target + "' 没有匹配的进程。" : output;
+    }
+
+    r.content.push_back({"text", result});
     return r;
 }
 
