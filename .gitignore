@@ -3,7 +3,7 @@
 *.so
 *.a
 *.out
-server
+/server
 webbench
 
 # IDE
