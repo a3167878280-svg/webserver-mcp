@@ -10,6 +10,7 @@ Log::Log()
 {
     m_count = 0;
     m_is_async = false;
+    m_persist_queue = nullptr;
 }
 
 Log::~Log()
@@ -17,6 +18,10 @@ Log::~Log()
     if (m_fp != NULL)
     {
         fclose(m_fp);
+    }
+    if (m_persist_queue != nullptr)
+    {
+        delete m_persist_queue;
     }
 }
 //异步需要设置阻塞队列的长度，同步不需要设置
@@ -26,10 +31,15 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size, int split
     if (max_queue_size >= 1)
     {
         m_is_async = true;
+
+        // 日志队列 + 写线程
         m_log_queue = new block_queue<string>(max_queue_size);
         pthread_t tid;
-        //flush_log_thread为回调函数,这里表示创建线程异步写日志
         pthread_create(&tid, NULL, flush_log_thread, NULL);
+
+        // 持久化队列 + 写线程 (对话落盘等通用异步文件写入)
+        m_persist_queue = new block_queue<string>(max_queue_size);
+        pthread_create(&tid, NULL, persist_thread, NULL);
     }
     
     m_close_log = close_log;
@@ -161,4 +171,58 @@ void Log::flush(void)
     //强制刷新写入流缓冲区
     fflush(m_fp);
     m_mutex.unlock();
+}
+
+/**
+ * 异步持久化入口 — 将数据推入持久化队列
+ *
+ * 队列条目格式: file_path + '\n' + content
+ * 队列满时降级为同步写 (不丢数据)
+ */
+void Log::persist(const std::string& file_path, const std::string& content)
+{
+    std::string entry = file_path + '\n' + content;
+
+    if (m_is_async && m_persist_queue != nullptr && !m_persist_queue->full())
+    {
+        m_persist_queue->push(entry);
+    }
+    else
+    {
+        // 降级: 同步写
+        FILE* f = fopen(file_path.c_str(), "w");
+        if (f)
+        {
+            fputs(content.c_str(), f);
+            fclose(f);
+        }
+    }
+}
+
+/**
+ * 持久化写循环 — 独立线程运行
+ *
+ * 从持久化队列中取任务，解析出文件路径和内容后写入。
+ * 以覆盖模式打开文件: 每次写入都是对话的完整快照。
+ */
+void* Log::persist_write_loop()
+{
+    std::string entry;
+    while (m_persist_queue->pop(entry))
+    {
+        // 解析: file_path + '\n' + content
+        size_t nl = entry.find('\n');
+        if (nl == std::string::npos) continue;
+
+        std::string path = entry.substr(0, nl);
+        std::string content = entry.substr(nl + 1);
+
+        FILE* f = fopen(path.c_str(), "w");
+        if (f)
+        {
+            fputs(content.c_str(), f);
+            fclose(f);
+        }
+    }
+    return nullptr;
 }

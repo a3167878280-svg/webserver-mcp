@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
 project(TinyWebServer-MCP VERSION 0.1.0 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,6 +22,7 @@ set(SOURCES
     src/server/conversation_manager.cpp
     src/llm/llm_client.cpp
     src/llm/tool_orchestrator.cpp
+    src/llm/context_manager.cpp
 )
 
 add_executable(mcp_server ${SOURCES})
@@ -56,3 +59,34 @@ add_subdirectory(plugins/weather_plugin)
 add_subdirectory(plugins/review_plugin)
 add_subdirectory(plugins/bilibili_plugin)
 add_subdirectory(plugins/command_plugin)
+
+if(BUILD_TESTING)
+    add_executable(mcp_core_tests
+        tests/mcp_core_tests.cpp
+        src/mcp/jsonrpc_parser.cpp
+        src/mcp/jsonrpc_serializer.cpp
+        src/mcp/mcp_handler.cpp
+        src/plugin/plugin_registry.cpp
+        src/log/log.cpp
+    )
+    target_include_directories(mcp_core_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party
+    )
+    target_link_libraries(mcp_core_tests PRIVATE pthread)
+    add_test(NAME mcp_core_tests COMMAND mcp_core_tests)
+
+    add_executable(mcp_core_benchmark
+        tests/mcp_core_benchmark.cpp
+        src/mcp/jsonrpc_parser.cpp
+        src/mcp/jsonrpc_serializer.cpp
+        src/mcp/mcp_handler.cpp
+        src/plugin/plugin_registry.cpp
+        src/log/log.cpp
+    )
+    target_include_directories(mcp_core_benchmark PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party
+    )
+    target_link_libraries(mcp_core_benchmark PRIVATE pthread)
+endif()

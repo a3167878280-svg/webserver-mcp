@@ -65,7 +65,8 @@ int main(int argc, char* argv[]) {
     LOG_INFO("Loaded %d plugin(s) from %s", loaded, config.plugin_dir.c_str());
 
     // 4.5 创建对话管理器 (HTTP 模式下的多轮对话支持)
-    server::ConversationManager conv_mgr;
+    //     注入 Log 系统，对话持久化通过 Log::persist() 异步落盘
+    server::ConversationManager conv_mgr(Log::get_instance());
 
     // 5. 创建 MCP 方法路由器，注入 PluginRegistry
     //    McpHandler 内部维护一个 method → handler 映射表:

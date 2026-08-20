@@ -91,6 +91,8 @@ class LlmClient {
 public:
     LlmClient();
 
+    const std::string& last_error() const { return m_last_error; }
+
     /**
      * 流式聊天 — 一次完整的 LLM 调用
      *
@@ -138,6 +140,7 @@ private:
      * 所以需要维护 index→id 映射，把参数分片关联到正确的工具调用。
      */
     std::unordered_map<int, std::string> m_tool_index_map;
+    std::string m_last_error;
 };
 
 } // namespace llm

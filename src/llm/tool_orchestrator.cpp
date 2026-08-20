@@ -36,9 +36,33 @@
 #include "../mcp/jsonrpc.h"
 #include "../log/log.h"
 #include "../common.h"
+#include "context_manager.h"
 #include <algorithm>
 
 namespace llm {
+
+// 去除 <think>...</think> 块 (Qwen3/DeepSeek 思考内容)
+static std::string strip_think(const std::string& text) {
+    std::string result;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t open = text.find("<think>", pos);
+        if (open == std::string::npos) {
+            result += text.substr(pos);
+            break;
+        }
+        result += text.substr(pos, open - pos);
+        size_t close = text.find("</think>", open + 7);
+        if (close == std::string::npos) {
+            break;  // 未闭合，丢弃剩余
+        }
+        pos = close + 8;
+    }
+    // 清理空行
+    while (!result.empty() && (result[0] == '\n' || result[0] == '\r')) result.erase(0, 1);
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
+    return result;
+}
 
 ToolOrchestrator::ToolOrchestrator(mcp::McpHandler& handler)
     : m_handler(handler) {}
@@ -77,13 +101,7 @@ void ToolOrchestrator::process(
         Message sys;
         sys.role = "system";
         sys.content =
-            "你是运行在 Linux 服务器上的助手。你有工具可以执行命令、读写文件、搜索内容、检查进程、查天气。\n\n"
-            "规则:\n"
-            "1. 用户的问题如果需要工具才能回答，直接调用工具。如果不需要，直接回答。\n"
-            "2. 工具返回数据后，用中文简洁总结。不要重复原始数据，要给出结论。\n"
-            "3. 用户问\"有没有运行\"→ 先调 process_check，然后明确回答\"在运行\"或\"没运行\"。\n"
-            "4. 大文件先用 grep_file 搜索，不要整篇通读。\n"
-            "5. 一次最多调 2 个工具，先完成再考虑下一步。";
+            "/no_think 你是 Linux 助手。需要工具就直接调用，拿到结果用中文一句话总结。不要解释过程。";
         messages.insert(messages.begin(), sys);
     }
 
@@ -121,10 +139,14 @@ void ToolOrchestrator::process(
 
     // ── 步骤 3: 过滤用户禁用的工具 ──
     if (!disabled_tools.empty()) {
-        tools.erase(std::remove_if(tools.begin(), tools.end(),
-            [&](const mcp::ToolDef& t) {
-                return std::find(disabled_tools.begin(), disabled_tools.end(), t.name) != disabled_tools.end();
-            }), tools.end());
+        if (std::find(disabled_tools.begin(), disabled_tools.end(), "*") != disabled_tools.end()) {
+            tools.clear();
+        } else {
+            tools.erase(std::remove_if(tools.begin(), tools.end(),
+                [&](const mcp::ToolDef& t) {
+                    return std::find(disabled_tools.begin(), disabled_tools.end(), t.name) != disabled_tools.end();
+                }), tools.end());
+        }
     }
 
     // ── 步骤 4: Agent 循环 ──
@@ -133,6 +155,9 @@ void ToolOrchestrator::process(
 
     while (round < MAX_ROUNDS) {
         round++;
+
+        // ── 上下文管理: 截断过长工具结果 + 必要时摘要压缩 ──
+        prepare_context(messages, model, client, base_url, api_key, callback);
 
         std::string full_content;            // 累积本轮 LLM 输出的所有文本
         std::vector<ToolCall> final_tool_calls; // LLM 最终决定的工具调用
@@ -155,7 +180,10 @@ void ToolOrchestrator::process(
             });
 
         if (!ok) {
-            callback("error", "Failed to connect to LLM API");
+            std::string err = client.last_error().empty()
+                ? "Failed to connect to LLM API"
+                : client.last_error();
+            callback("error", err);
             return;
         }
 
@@ -219,6 +247,15 @@ void ToolOrchestrator::process(
                     }
                     // 引导 LLM 总结
                     tool_result_text += "\n\n---\n请基于以上数据给用户一个明确、直接的中文回答。不要只重复原始数据，要给出结论。";
+
+                    // 截断过长的工具结果 (单结果不超过上下文预算的 25%)
+                    const size_t tool_budget = context::context_budget(model) / 4;
+                    if (context::estimate_tokens(tool_result_text) > tool_budget) {
+                        size_t orig = context::estimate_tokens(tool_result_text);
+                        tool_result_text = context::truncate_tool_result(tool_result_text, tool_budget);
+                        LOG_INFO("Truncated tool result: %zu -> %zu estimated tokens",
+                                 orig, context::estimate_tokens(tool_result_text));
+                    }
                     frontend_text = res.dump();
                 } else {
                     tool_result_text = "工具执行失败，请告知用户此工具暂时不可用。";
@@ -238,12 +275,141 @@ void ToolOrchestrator::process(
         }
 
         // ── 分支 B: LLM 直接给出最终回复 (无工具调用) ──
-        callback("done", full_content);
+        callback("done", strip_think(full_content));
         return;
     }
 
     // 超过 10 轮 → 强制终止
     callback("error", "Max tool calling rounds reached");
+}
+
+/**
+ * 上下文准备 — 在每轮 LLM 调用前执行
+ *
+ * 1. 遍历已有 tool 消息，截断超过预算 25% 的单个结果
+ * 2. 如果 messages 总量超出模型上下文预算的 70%，触发摘要压缩
+ *    摘要最旧的 ~60% 消息，替换为一条 system 角色摘要
+ */
+void ToolOrchestrator::prepare_context(
+    std::vector<Message>& messages,
+    const std::string& model,
+    LlmClient& client,
+    const std::string& base_url,
+    const std::string& api_key,
+    OrchestratorCallback callback) {
+
+    const size_t budget = context::context_budget(model);
+    const size_t tool_max = budget / 4;  // 单个工具结果最多占 25% 预算
+
+    // 步骤 1: 截断已有的过长 tool 消息
+    for (auto& msg : messages) {
+        if (msg.role == "tool") {
+            size_t tok = context::estimate_tokens(msg.content);
+            if (tok > tool_max) {
+                msg.content = context::truncate_tool_result(msg.content, tool_max);
+                LOG_INFO("Truncated historical tool result: %zu -> %zu tokens",
+                         tok, context::estimate_tokens(msg.content));
+            }
+        }
+    }
+
+    // 步骤 2: 如果总量仍超出预算且消息数足够，触发摘要压缩
+    if (context::needs_truncation(messages, model) && messages.size() > 6) {
+        // 跳过 system 消息，摘要最旧的 ~60% 非 system 消息
+        size_t sys_count = 0;
+        while (sys_count < messages.size() && messages[sys_count].role == "system") {
+            sys_count++;
+        }
+        size_t non_sys = messages.size() - sys_count;
+        size_t summarize_count = non_sys * 3 / 5;  // 60%
+        if (summarize_count < 2) summarize_count = 2;
+        if (summarize_count > non_sys - 2) summarize_count = non_sys - 2;  // 至少保留最后 2 条
+
+        // 构建要摘要的子区间
+        std::vector<Message> to_summarize(
+            messages.begin() + sys_count,
+            messages.begin() + sys_count + summarize_count);
+
+        // 调 LLM 做摘要
+        callback("delta", "\n[压缩历史对话...]\n");
+        Message summary = summarize_history(client, base_url, api_key, model,
+                                             to_summarize, callback);
+
+        // 替换: 删除 old messages，插入摘要（紧跟 system prompt 后面）
+        messages.erase(messages.begin() + sys_count,
+                       messages.begin() + sys_count + summarize_count);
+        messages.insert(messages.begin() + sys_count, summary);
+
+        LOG_INFO("Summarized %zu messages into ~%zu token summary (budget=%zu)",
+                 summarize_count, context::estimate_tokens(summary.content), budget);
+    }
+}
+
+/**
+ * 摘要压缩 — 调 LLM 把旧消息压缩成一句话
+ *
+ * prompt 设计要点:
+ *   - 要求中文输出，一句话总结
+ *   - 不传 tools（轻量调用，避免递归工具触发）
+ *   - 限制 max_tokens 为 300（输出足够简洁）
+ */
+Message ToolOrchestrator::summarize_history(
+    LlmClient& client,
+    const std::string& base_url,
+    const std::string& api_key,
+    const std::string& model,
+    const std::vector<Message>& messages_to_summarize,
+    OrchestratorCallback callback) {
+
+    // 拼接待摘要的消息内容
+    std::string conversation_text;
+    for (const auto& msg : messages_to_summarize) {
+        conversation_text += "[" + msg.role + "]: ";
+        // 截断每条消息到 500 token，避免摘要 prompt 本身过大
+        if (context::estimate_tokens(msg.content) > 500) {
+            conversation_text += context::truncate_tool_result(msg.content, 500);
+        } else {
+            conversation_text += msg.content;
+        }
+        conversation_text += "\n\n";
+    }
+
+    // 构建摘要 prompt
+    Message summary_prompt;
+    summary_prompt.role = "user";
+    summary_prompt.content =
+        "请用一句中文总结以下对话历史的关键信息（做了什么、查到了什么、得出了什么结论）：\n\n"
+        + conversation_text +
+        "\n请直接给出总结，不要加前缀说明。";
+
+    std::vector<Message> summary_msgs = {summary_prompt};
+    std::vector<mcp::ToolDef> no_tools;  // 空 tools → 不会触发工具调用
+
+    std::string summary_text;
+
+    // 调 LLM（不带 tools，轻量调用）
+    bool ok = client.chat_stream(base_url, api_key, model,
+        summary_msgs, no_tools,
+        [&](const std::string& delta, const std::vector<llm::ToolCall>& /*tc*/, bool finished) {
+            if (!delta.empty()) summary_text += delta;
+            (void)finished;
+        });
+
+    if (!ok || summary_text.empty()) {
+        // 摘要失败 → 降级：手动拼接前几条消息的前几个字
+        summary_text = "之前的对话包括: ";
+        for (size_t i = 0; i < std::min(messages_to_summarize.size(), size_t(4)); ++i) {
+            if (messages_to_summarize[i].role == "user") {
+                summary_text += messages_to_summarize[i].content.substr(0, 80) + "; ";
+            }
+        }
+    }
+
+    // 构建 system 角色摘要消息
+    Message result;
+    result.role = "system";
+    result.content = "[历史对话摘要] " + summary_text;
+    return result;
 }
 
 } // namespace llm

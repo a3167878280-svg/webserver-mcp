@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <memory>
 #include <type_traits>
+#include <cstdlib>
 
 namespace llm {
 
@@ -74,6 +75,23 @@ static UrlInfo parse_url(const std::string& base_url) {
     return info;
 }
 
+static std::string preview_body(const std::string& body, size_t limit = 500) {
+    if (body.size() <= limit) return body;
+    return body.substr(0, limit) + "...";
+}
+
+static bool is_local_host(const std::string& host) {
+    return host.find("localhost") != std::string::npos ||
+           host.find("127.0.0.1") != std::string::npos ||
+           host.find("0.0.0.0") != std::string::npos;
+}
+
+static std::string local_tool_hint(const std::string& host, bool has_tools) {
+    if (!has_tools) return "";
+    if (!is_local_host(host)) return "";
+    return " (本地兼容 API 返回错误；请确认模型名存在，并确认该模型/服务支持 tools/function calling。也可在前端临时禁用工具排查。)";
+}
+
 // ── 公开接口 ──────────────────────────────────────────────
 /**
  * 流式聊天入口 — 自动路由到 OpenAI 或 Anthropic 实现
@@ -87,6 +105,7 @@ bool LlmClient::chat_stream(
     const std::string& model, const std::vector<Message>& messages,
     const std::vector<mcp::ToolDef>& tools, StreamCallback callback) {
 
+    m_last_error.clear();
     auto u = parse_url(base_url);
 
     if (u.is_anthropic) {
@@ -142,8 +161,7 @@ bool LlmClient::chat_openai(
     std::vector<ToolCall> accumulated_tools;
     nlohmann::json req_body;
     req_body["model"] = model;
-    // 本地 llama.cpp 不支持 stream + tools 同时用，有工具时走非流式
-    req_body["stream"] = tools.empty();
+    req_body["stream"] = true;  // 始终流式，前端有模拟打字兜底
     nlohmann::json msgs_arr = nlohmann::json::array();
     for (const auto& msg : messages) {
         nlohmann::json m;
@@ -174,75 +192,157 @@ bool LlmClient::chat_openai(
     };
 
     // SSE 流回调 (捕获所有局部变量)
+    bool finished_signaled = false;
+    bool stream_produced_output = false;
+    std::string raw_body;  // 累积原始响应体（SSE 解析失败时用作 JSON 回退）
     auto sse_handler = [&](const char* data, size_t len) -> bool {
         if (len == 0) return true;
         std::string chunk(data, len);
+        raw_body += chunk;
         std::istringstream stream(chunk);
         std::string line;
         while (std::getline(stream, line)) {
             if (line.empty() || line[0] == ':') continue;
-            if (line.rfind("data: ", 0) != 0) continue;
-            std::string json_str = line.substr(6);
-            if (json_str == "[DONE]") { callback("", accumulated_tools, true); return true; }
+            // 兼容 "data: " 和 "data:" 两种格式 (本地模型可能不带空格)
+            std::string json_str;
+            if (line.rfind("data: ", 0) == 0) {
+                json_str = line.substr(6);  // "data: "
+            } else if (line.rfind("data:", 0) == 0) {
+                json_str = line.substr(5);  // "data:"
+                size_t ns = 0;
+                while (ns < json_str.size() && json_str[ns] == ' ') ns++;
+                if (ns > 0) json_str = json_str.substr(ns);
+            } else {
+                continue;
+            }
+            if (json_str == "[DONE]") {
+                finished_signaled = true;
+                callback("", accumulated_tools, true);
+                return true;
+            }
             std::string delta; std::vector<ToolCall> tc; bool finished = false;
             parse_openai_chunk(json_str, delta, tc, finished);
-            if (!delta.empty()) callback(delta, {}, false);
+            if (!delta.empty()) {
+                stream_produced_output = true;
+                callback(delta, {}, false);
+            }
             for (auto& t : tc) {
                 bool found = false;
                 for (auto& at : accumulated_tools) {
                     if (at.id == t.id) { at.function_name += t.function_name; at.arguments += t.arguments; found = true; break; }
                 }
-                if (!found && !t.id.empty()) accumulated_tools.push_back(t);
+                if (!found && !t.id.empty()) { accumulated_tools.push_back(t); stream_produced_output = true; }
             }
-            if (finished && !accumulated_tools.empty()) callback("", accumulated_tools, true);
+            if (finished && !accumulated_tools.empty()) {
+                finished_signaled = true;
+                callback("", accumulated_tools, true);
+            }
         }
         return true;
     };
 
     // 选择 HTTP 或 HTTPS 客户端
     httplib::Result res;
-    if (host.find("localhost") != std::string::npos || host.find("127.0.0.1") != std::string::npos || host.find("0.0.0.0") != std::string::npos) {
+    if (is_local_host(host)) {
         httplib::Client cli("http://" + host);
         cli.set_connection_timeout(10);
         cli.set_read_timeout(120);
         cli.set_write_timeout(30);
-        if (tools.empty()) {
-            // 流式: 用 content receiver
-            res = cli.Post(path, headers, body, "application/json", sse_handler);
-        } else {
-            // 非流式: 不用 receiver, 直接读 body
-            res = cli.Post(path, headers, body, "application/json");
-        }
+        // 始终走流式 (sse_handler 同时处理文本和 tool_calls 增量)
+        res = cli.Post(path, headers, body, "application/json", sse_handler);
     } else {
         httplib::SSLClient cli(host);
         cli.set_connection_timeout(10);
         cli.set_read_timeout(120);
         cli.set_write_timeout(30);
         cli.enable_server_certificate_verification(false);
-        if (tools.empty()) {
-            res = cli.Post(path, headers, body, "application/json", sse_handler);
-        } else {
-            res = cli.Post(path, headers, body, "application/json");
-        }
+        // 始终走流式
+        res = cli.Post(path, headers, body, "application/json", sse_handler);
     }
 
     if (!res) {
-        LOG_ERROR("OpenAI API error: %s", httplib::to_string(res.error()).c_str());
+        m_last_error = "OpenAI-compatible API request failed at " + host + path + ": " + httplib::to_string(res.error());
+        LOG_ERROR("%s", m_last_error.c_str());
         return false;
     }
     if (res->status != 200) {
-        LOG_ERROR("OpenAI API status %d: %.500s", res->status, res->body.c_str());
+        std::string body_preview = preview_body(res->body.empty() ? raw_body : res->body);
+
+        // Some local OpenAI-compatible servers support tools and streaming separately,
+        // but reject using them together. Retry the same request without streaming so
+        // tool calling still works; the browser will receive the completed chunk.
+        if (is_local_host(host) && !tools.empty() &&
+            body_preview.find("Cannot use tools with stream") != std::string::npos) {
+            nlohmann::json retry_body_json = req_body;
+            retry_body_json["stream"] = false;
+            std::string retry_body = retry_body_json.dump();
+
+            httplib::Client retry_cli("http://" + host);
+            retry_cli.set_connection_timeout(10);
+            retry_cli.set_read_timeout(120);
+            retry_cli.set_write_timeout(30);
+            auto retry_res = retry_cli.Post(path, headers, retry_body, "application/json");
+
+            if (retry_res && retry_res->status == 200) {
+                try {
+                    auto j = nlohmann::json::parse(retry_res->body);
+                    if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
+                        auto& choice = j["choices"][0];
+                        auto& msg = choice["message"];
+
+                        if (msg.contains("content") && msg["content"].is_string()) {
+                            callback(msg["content"].get<std::string>(), {}, false);
+                        }
+
+                        if (msg.contains("tool_calls") && msg["tool_calls"].is_array() && !msg["tool_calls"].empty()) {
+                            std::vector<ToolCall> tcs;
+                            for (auto& tc : msg["tool_calls"]) {
+                                ToolCall t;
+                                t.id = tc.value("id", "");
+                                if (tc.contains("function")) {
+                                    t.function_name = tc["function"].value("name", "");
+                                    t.arguments = tc["function"].value("arguments", "");
+                                }
+                                tcs.push_back(t);
+                            }
+                            callback("", tcs, true);
+                        } else {
+                            callback("", {}, true);
+                        }
+                        return true;
+                    }
+                    m_last_error = "OpenAI-compatible non-stream retry returned an unexpected response at " + host + path;
+                } catch (const std::exception& e) {
+                    m_last_error = "Failed to parse OpenAI-compatible non-stream retry at " + host + path + ": " + e.what();
+                }
+            } else if (!retry_res) {
+                m_last_error = "OpenAI-compatible non-stream retry failed at " + host + path + ": " + httplib::to_string(retry_res.error());
+            } else {
+                m_last_error = "OpenAI-compatible non-stream retry status " + std::to_string(retry_res->status) +
+                               " at " + host + path +
+                               (retry_res->body.empty() ? "" : ": " + preview_body(retry_res->body));
+            }
+            LOG_ERROR("%s", m_last_error.c_str());
+            return false;
+        }
+
+        m_last_error = "OpenAI-compatible API status " + std::to_string(res->status) +
+                       " at " + host + path +
+                       (body_preview.empty() ? "" : ": " + body_preview) +
+                       local_tool_hint(host, !tools.empty());
+        LOG_ERROR("%s", m_last_error.c_str());
         return false;
     }
 
-    // 非流式模式: 解析完整的 response body
-    if (!tools.empty() && !res->body.empty()) {
+    // 安全兜底 1: SSE 解析没有产生输出 → 尝试把原始响应体当 JSON 解析
+    // (httplib 的 content receiver 会消费 res->body，所以用 raw_body)
+    if (!stream_produced_output && !raw_body.empty()) {
         try {
-            auto j = nlohmann::json::parse(res->body);
+            auto j = nlohmann::json::parse(raw_body);
             if (j.contains("choices") && j["choices"].is_array() && !j["choices"].empty()) {
                 auto& choice = j["choices"][0];
                 auto& msg = choice["message"];
-                // 提取文本内容 (可能为 null)
+                // 提取文本
                 if (msg.contains("content") && !msg["content"].is_null()) {
                     callback(msg["content"].get<std::string>(), {}, false);
                 }
@@ -259,14 +359,21 @@ bool LlmClient::chat_openai(
                         tcs.push_back(t);
                     }
                     callback("", tcs, true);
-                }
-                else if (msg.contains("content") && !msg["content"].is_null()) {
-                    // 只有文本，无工具调用
+                } else if (msg.contains("content") && !msg["content"].is_null()) {
                     callback("", {}, true);
                 }
             }
         } catch (...) {
-            fprintf(stderr, "DEBUG L: failed to parse non-stream response\n");
+            LOG_ERROR("Failed to parse non-streaming fallback response");
+        }
+    }
+
+    // 安全兜底 2: 某些兼容 API 不发 [DONE]，手动触发完成信号
+    if (!finished_signaled) {
+        if (accumulated_tools.empty()) {
+            callback("", {}, true);
+        } else {
+            callback("", accumulated_tools, true);
         }
     }
 
@@ -393,8 +500,18 @@ bool LlmClient::chat_anthropic(
             std::string line;
             while (std::getline(stream, line)) {
                 if (line.empty() || line[0] == ':') continue;
-                if (line.rfind("data: ", 0) != 0) continue;
-                std::string json_str = line.substr(6);
+                // 兼容 "data: " 和 "data:" 两种格式
+                std::string json_str;
+                if (line.rfind("data: ", 0) == 0) {
+                    json_str = line.substr(6);
+                } else if (line.rfind("data:", 0) == 0) {
+                    json_str = line.substr(5);
+                    size_t ns = 0;
+                    while (ns < json_str.size() && json_str[ns] == ' ') ns++;
+                    if (ns > 0) json_str = json_str.substr(ns);
+                } else {
+                    continue;
+                }
                 if (json_str == "[DONE]") { callback("", accumulated_tools, true); return true; }
 
                 std::string delta; std::vector<ToolCall> tc; bool finished = false;
@@ -424,13 +541,15 @@ bool LlmClient::chat_anthropic(
         });
 
     if (!res) {
-        fprintf(stderr, "DEBUG anthropic: HTTP error: %s\n", httplib::to_string(res.error()).c_str());
+        m_last_error = "Anthropic API request failed at " + host + path + ": " + httplib::to_string(res.error());
+        LOG_ERROR("%s", m_last_error.c_str());
         return false;
     }
-    fprintf(stderr, "DEBUG anthropic: HTTP status=%d\n", res->status);
     if (res->status != 200) {
-        fprintf(stderr, "DEBUG anthropic error body: %s\n", res->body.c_str());
-        fprintf(stderr, "DEBUG anthropic request body: %s\n", body.c_str());
+        m_last_error = "Anthropic API status " + std::to_string(res->status) +
+                       " at " + host + path +
+                       (res->body.empty() ? "" : ": " + preview_body(res->body));
+        LOG_ERROR("%s", m_last_error.c_str());
         return false;
     }
     return true;

@@ -24,12 +24,32 @@ public:
     {
         Log::get_instance()->async_write_log();
     }
+
+    static void *persist_thread(void *args)
+    {
+        Log::get_instance()->persist_write_loop();
+    }
+
     //可选择的参数有日志文件、日志缓冲区大小、最大行数以及最长日志条队列
     bool init(const char *file_name, int close_log, int log_buf_size = 8192, int split_lines = 5000000, int max_queue_size = 0);
 
     void write_log(int level, const char *format, ...);
 
     void flush(void);
+
+    /**
+     * 异步持久化 — 将任意数据写入指定文件（走独立持久化队列 + 独立线程）
+     *
+     * 和 write_log 的区别:
+     *   write_log — 格式化日志行 → 追加到统一的日志文件
+     *   persist   — 原始数据 → 覆盖写入到任意指定文件
+     *
+     * 用于对话管理器的异步落盘: 持久化队列满时降级为同步写
+     *
+     * @param file_path  目标文件路径 (如 "logs/conv_abc123.json")
+     * @param content    要写入的完整内容 (覆盖模式)
+     */
+    void persist(const std::string& file_path, const std::string& content);
 
 private:
     Log();
@@ -46,6 +66,14 @@ private:
         }
     }
 
+    /**
+     * 持久化写循环 — 独立线程，从 persist 队列取任务并落盘
+     *
+     * 队列条目格式: "file_path\ncontent"
+     * 第一个 '\n' 之前是目标文件路径，之后是写入内容
+     */
+    void *persist_write_loop();
+
 private:
     char dir_name[128]; //路径名
     char log_name[128]; //log文件名
@@ -55,8 +83,9 @@ private:
     int m_today;        //因为按天分类,记录当前时间是那一天
     FILE *m_fp;         //打开log的文件指针
     char *m_buf;
-    block_queue<string> *m_log_queue; //阻塞队列
-    bool m_is_async;                  //是否同步标志位
+    block_queue<string> *m_log_queue;     //日志阻塞队列
+    block_queue<string> *m_persist_queue; //持久化阻塞队列
+    bool m_is_async;                      //是否同步标志位
     locker m_mutex;
     int m_close_log; //关闭日志
 };

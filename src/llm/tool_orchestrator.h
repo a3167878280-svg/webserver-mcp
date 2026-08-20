@@ -55,6 +55,7 @@
 #pragma once
 
 #include "llm_client.h"
+#include "context_manager.h"
 #include "../mcp/mcp_handler.h"
 #include <string>
 #include <functional>
@@ -90,6 +91,38 @@ public:
         OrchestratorCallback callback);
 
 private:
+    /**
+     * 上下文准备 — 截断过长工具结果 + 必要时触发摘要压缩
+     *
+     * @param messages     输入: 当前的 messages 数组（会被原地修改）
+     * @param model        模型名（用于查询上下文预算）
+     * @param client       LLM 客户端（用于可能的摘要调用）
+     * @param base_url     LLM API 地址
+     * @param api_key      LLM API key
+     * @param callback     回调（用于向前端推送摘要进度）
+     */
+    void prepare_context(
+        std::vector<Message>& messages,
+        const std::string& model,
+        LlmClient& client,
+        const std::string& base_url,
+        const std::string& api_key,
+        OrchestratorCallback callback);
+
+    /**
+     * 摘要压缩 — 调 LLM 把旧消息压缩成一句话
+     *
+     * 使用不带 tools 的轻量 LLM 调用，prompt 引导模型提取关键信息。
+     * 返回一条 role="system" 的摘要消息。
+     */
+    Message summarize_history(
+        LlmClient& client,
+        const std::string& base_url,
+        const std::string& api_key,
+        const std::string& model,
+        const std::vector<Message>& messages_to_summarize,
+        OrchestratorCallback callback);
+
     mcp::McpHandler& m_handler;
     static constexpr int MAX_ROUNDS = 10;  // 防止死循环: 最多调 10 轮工具
 };

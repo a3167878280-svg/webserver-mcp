@@ -531,6 +531,7 @@ void HttpSseTransport::handle_chat_request(
     std::string model = req_json.value("model", m_chat_config.llm_model);
     std::string base_url = req_json.value("base_url", m_chat_config.llm_base_url);
     std::string conv_id = req_json.value("conversation_id", "");
+    std::string local_mode = req_json.value("local_mode", "");
     std::vector<std::string> disabled_tools;
     if (req_json.contains("disabled_tools") && req_json["disabled_tools"].is_array()) {
         for (auto& d : req_json["disabled_tools"]) disabled_tools.push_back(d.get<std::string>());
@@ -539,9 +540,11 @@ void HttpSseTransport::handle_chat_request(
     if (user_message.empty()) { sse_send("error", "Missing message"); return; }
     if (api_key.empty())     { sse_send("error", "Missing API key"); return; }
 
-    // 加载历史记录 (优先从 ConversationManager 的持久化存储)
+    // 本地实时模式不走服务端历史，避免历史里的 tool 消息让 llama.cpp 兼容服务解析失败。
     std::vector<llm::Message> history;
-    if (!conv_id.empty() && m_chat_config.conv_manager) {
+    if (local_mode == "realtime") {
+        history.clear();
+    } else if (!conv_id.empty() && m_chat_config.conv_manager) {
         history = m_chat_config.conv_manager->get_history(conv_id);
     } else if (req_json.contains("history") && req_json["history"].is_array()) {
         for (auto& h : req_json["history"]) {
